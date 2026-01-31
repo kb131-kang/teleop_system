@@ -1,0 +1,21 @@
+# MuJoCo simulator configuration
+
+mujoco:
+  timestep: 0.002          # Physics timestep (seconds) -> 500Hz
+  gravity: [0.0, 0.0, -9.81]
+  render:
+    enabled: true
+    width: 1280
+    height: 720
+    camera_name: "head_camera"
+  solver:
+    iterations: 50
+    tolerance: 1.0e-8
+  model:
+    urdf_path: models/rby1/rby1.urdf
+    # If MJCF is available, prefer it over URDF conversion
+    mjcf_path: null
+  control:
+    # Position control gains for MuJoCo actuators
+    kp: 1000.0
+    kd: 100.0

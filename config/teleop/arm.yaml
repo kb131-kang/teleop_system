@@ -1,0 +1,48 @@
+# Arm teleoperation configuration (IK parameters, velocity limits, etc.)
+
+arm_teleop:
+  rate_hz: 100
+
+  ik:
+    solver: pink       # pink | custom
+    dt: 0.01           # IK integration timestep
+
+    # Task weights for multi-chain IK
+    position_weight: 1.0
+    orientation_weight: 0.5
+    posture_weight: 0.1
+
+    # Convergence thresholds
+    position_tolerance: 0.001   # meters
+    orientation_tolerance: 0.01 # radians
+
+    # Damping for singularity robustness
+    damping: 1.0e-4
+
+  limits:
+    max_joint_velocity: 2.0     # rad/s per joint
+    max_ee_linear_velocity: 1.0 # m/s
+    max_ee_angular_velocity: 2.0 # rad/s
+
+  # Scale factors for mapping master → slave motion
+  scaling:
+    position: 1.0       # 1:1 mapping
+    orientation: 1.0
+
+  # Chain definitions (must match URDF joint names)
+  chains:
+    left_arm:
+      ee_frame: "left_hand_link"
+      joint_names: []  # Auto-loaded from URDF
+    right_arm:
+      ee_frame: "right_hand_link"
+      joint_names: []
+    torso:
+      ee_frame: "torso_link"
+      joint_names: []
+
+  # Null-space posture target (default upright)
+  posture:
+    use_default: true
+    # If use_default is false, specify joint angles here
+    custom_angles: []

@@ -1,0 +1,33 @@
+# Hand teleoperation configuration (retargeting, joint mapping)
+
+hand_teleop:
+  rate_hz: 100
+
+  retargeting:
+    # Mapping method: direct | linear_scale | neural
+    method: linear_scale
+
+    # Joint mapping from Manus Glove (ergonomics) to DG-5F
+    # Manus provides 4 joints per finger (MCP_spread, MCP_flex, PIP, DIP)
+    # DG-5F has 4 joints per finger (20 total)
+    finger_order: ["thumb", "index", "middle", "ring", "pinky"]
+
+    # Scale factors per finger (Manus range -> DG-5F range)
+    scale_factors:
+      thumb:  [1.0, 1.0, 1.0, 1.0]
+      index:  [1.0, 1.0, 1.0, 1.0]
+      middle: [1.0, 1.0, 1.0, 1.0]
+      ring:   [1.0, 1.0, 1.0, 1.0]
+      pinky:  [1.0, 1.0, 1.0, 1.0]
+
+    # Offset (bias) per finger joint
+    offsets:
+      thumb:  [0.0, 0.0, 0.0, 0.0]
+      index:  [0.0, 0.0, 0.0, 0.0]
+      middle: [0.0, 0.0, 0.0, 0.0]
+      ring:   [0.0, 0.0, 0.0, 0.0]
+      pinky:  [0.0, 0.0, 0.0, 0.0]
+
+  limits:
+    max_joint_velocity: 5.0  # rad/s
+    smoothing_alpha: 0.3     # Exponential smoothing (0=no smooth, 1=max smooth)

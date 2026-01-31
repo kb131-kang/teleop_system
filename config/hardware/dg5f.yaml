@@ -1,0 +1,26 @@
+# TESOLLO DG-5F hand gripper configuration
+
+dg5f:
+  joints_per_hand: 20  # 4 joints x 5 fingers
+  control_rate_hz: 500  # DG-5F native 500Hz control cycle
+
+  # Communication
+  connection:
+    protocol: modbus_tcp  # modbus_tcp | modbus_rtu | ros2
+    ip: "192.168.0.101"
+    port: 502
+
+  # ROS2 driver (DELTO_M_ROS2)
+  ros2:
+    driver_package: "dg5f_driver"
+    left_controller: "left_hand_controller"
+    right_controller: "right_hand_controller"
+
+  # Joint limits (radians)
+  joint_limits:
+    min: 0.0
+    max: 1.57  # ~90 degrees
+
+  # Finger order in joint array
+  finger_order: ["thumb", "index", "middle", "ring", "pinky"]
+  joints_per_finger: 4  # MCP_spread, MCP_flex, PIP, DIP

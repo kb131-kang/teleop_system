@@ -1,0 +1,34 @@
+# ROS2 (apt로 설치)
+# ros-jazzy-desktop
+# ros-jazzy-ros2-control
+# ros-jazzy-ros2-controllers
+
+# IK / Robotics
+pin>=2.7.0
+pin-pink>=3.4.0
+numpy>=1.26.0
+scipy>=1.12.0
+
+# VR / Tracking
+openvr>=2.12.1401
+
+# Simulation
+mujoco>=3.4.0
+
+# Visualization & Point Cloud
+open3d>=0.19.0
+
+# GUI
+dearpygui>=2.1.1
+
+# Configuration
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+
+# Utilities
+transforms3d>=0.4.1
+pyyaml>=6.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0

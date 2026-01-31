@@ -1,0 +1,30 @@
+# Rainbow Robotics RB-Y1 hardware configuration
+
+rby1:
+  connection:
+    ip: "192.168.0.100"
+    port: 5000
+    protocol: sdk  # sdk | ros2
+
+  urdf_path: models/rby1/rby1.urdf
+
+  joints:
+    left_arm_count: 7
+    right_arm_count: 7
+    torso_count: 6
+
+  # End-effector frame names in URDF
+  frames:
+    left_arm_ee: "left_hand_link"
+    right_arm_ee: "right_hand_link"
+    torso_ee: "torso_link"
+    head_camera: "head_camera_link"
+
+  base:
+    type: omnidirectional
+    max_linear_velocity: 1.0   # m/s
+    max_angular_velocity: 1.5  # rad/s
+
+  control:
+    mode: position  # position | velocity | torque
+    rate_hz: 100

@@ -1,0 +1,35 @@
+# HTC Vive Tracker configuration
+
+vive_tracker:
+  # SteamVR must be running
+  steamvr:
+    require_hmd: false  # Set false to use trackers without HMD
+
+  # Tracker serial-to-role mapping
+  # Update these with actual tracker serial numbers
+  tracker_mapping:
+    right_hand: "LHR-XXXXXXXX"
+    left_hand: "LHR-YYYYYYYY"
+    waist: "LHR-ZZZZZZZZ"
+    right_foot: "LHR-AAAAAAAA"
+    left_foot: "LHR-BBBBBBBB"
+
+  # Auto-detect mode: assign trackers by initial position
+  auto_detect:
+    enabled: true
+    # Height thresholds for classification (meters from floor)
+    head_min_height: 1.4
+    hand_min_height: 0.6
+    hand_max_height: 1.5
+    waist_min_height: 0.7
+    waist_max_height: 1.2
+    foot_max_height: 0.3
+
+  rate_hz: 100
+
+  # Coordinate frame: SteamVR uses Y-up, conversion to ROS2 Z-up done in transforms.py
+  calibration:
+    # Calibration offset from tracker to body reference
+    right_hand_offset: [0.0, 0.0, 0.0]
+    left_hand_offset: [0.0, 0.0, 0.0]
+    waist_offset: [0.0, 0.0, 0.0]

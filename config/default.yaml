@@ -1,0 +1,47 @@
+# Default configuration for the RB-Y1 Teleoperation System
+
+system:
+  mode: simulation  # simulation | hardware
+  log_level: INFO
+
+robot:
+  urdf_path: models/rby1/rby1.urdf
+  hand_urdf_path: models/dg5f/dg5f.urdf
+
+  # Joint counts per chain
+  left_arm_joints: 7
+  right_arm_joints: 7
+  torso_joints: 6
+  hand_joints: 20  # DG-5F per hand
+  total_upper_body_joints: 20  # 7 + 7 + 6
+
+  # End-effector frame names (must match URDF)
+  left_arm_ee_frame: "left_hand_link"
+  right_arm_ee_frame: "right_hand_link"
+  torso_ee_frame: "torso_link"
+
+modules:
+  arm_teleop:
+    enabled: true
+    rate_hz: 100
+  locomotion:
+    enabled: true
+    rate_hz: 50
+  hand_teleop:
+    enabled: true
+    rate_hz: 100
+  camera:
+    enabled: true
+    rate_hz: 30
+
+simulation:
+  backend: mujoco  # mujoco | isaac_lab
+  render: true
+  timestep: 0.002  # 500Hz physics
+
+coordinates:
+  # All internal data uses ROS2 convention: Z-up, xyzw quaternion
+  units:
+    distance: meters
+    angle: radians
+    time: seconds

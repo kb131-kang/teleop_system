@@ -1,0 +1,19 @@
+# Manus Glove configuration
+
+manus_glove:
+  sdk_version: "3.0.1"
+
+  # ROS2 topic names (published by MANUS ROS2 package)
+  ros2_topics:
+    left_glove: "/manus_glove_0"
+    right_glove: "/manus_glove_1"
+
+  # Data source: ergonomics (joint angles) or raw_skeleton (positions)
+  data_source: ergonomics
+
+  # Haptic feedback
+  haptics:
+    enabled: false
+    vibration_topic_suffix: "/vibration_cmd"
+
+  rate_hz: 100

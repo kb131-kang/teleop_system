@@ -1,0 +1,27 @@
+# Isaac Lab simulator configuration
+
+isaac_lab:
+  sim_version: "5.1"
+  lab_version: "2.3.0"
+  enable_pinocchio: true
+  timestep: 0.002
+
+  render:
+    enabled: true
+    width: 1280
+    height: 720
+
+  cloudxr:
+    enabled: false
+    server_ip: "localhost"
+
+  device:
+    type: "manusvive"  # manusvive | keyboard | spacemouse
+
+  scene:
+    ground_plane: true
+    lighting: "default"
+
+  model:
+    urdf_path: models/rby1/rby1.urdf
+    hand_urdf_path: models/dg5f/dg5f.urdf

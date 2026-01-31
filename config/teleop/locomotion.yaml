@@ -1,0 +1,26 @@
+# Locomotion teleoperation configuration (gait detection, speed mapping)
+
+locomotion:
+  rate_hz: 50
+
+  gait_detection:
+    # Minimum foot displacement to register a step (meters)
+    step_threshold: 0.05
+    # Dead zone for foot movement (meters) - ignore noise below this
+    deadzone: 0.02
+    # Smoothing window size for foot position filtering
+    smoothing_window: 5
+
+  velocity_mapping:
+    # Scale from foot displacement to robot velocity
+    linear_scale: 1.0        # m/s per meter of foot displacement
+    angular_scale: 1.0        # rad/s per radian of foot rotation
+    max_linear_velocity: 0.5  # m/s
+    max_angular_velocity: 1.0 # rad/s
+
+  # Reference frame: how feet positions map to robot motion
+  reference:
+    # Initial foot positions are calibrated on startup
+    auto_calibrate: true
+    # Use midpoint of two feet as reference origin
+    use_midpoint: true
