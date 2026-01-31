@@ -7,6 +7,8 @@ Launches:
   4. Locomotion Node (foot tracker -> gait detection -> base velocity)
   5. Dummy Glove Publisher (simulated glove data)
   6. Hand Teleop Node (glove -> retargeting -> gripper commands)
+  7. Dummy HMD Publisher (simulated HMD orientation)
+  8. Camera Teleop Node (HMD -> head pan/tilt commands)
 
 Usage:
     source /opt/ros/jazzy/setup.bash
@@ -111,6 +113,32 @@ def generate_launch_description():
                 "rate_hz": 100.0,
                 "max_joint_velocity": 5.0,
                 "smoothing_alpha": 0.3,
+            }],
+        ),
+
+        # ── Dummy HMD Publisher ──
+        Node(
+            package="teleop_system",
+            executable="dummy_hmd_pub",
+            name="dummy_hmd_pub",
+            output="screen",
+            parameters=[{
+                "rate_hz": 90.0,
+                "amplitude": 0.3,
+                "frequency": 0.15,
+            }],
+        ),
+
+        # ── Camera Teleop Node ──
+        Node(
+            package="teleop_system",
+            executable="camera_teleop_node",
+            name="camera_teleop",
+            output="screen",
+            parameters=[{
+                "rate_hz": 30.0,
+                "smoothing_alpha": 0.3,
+                "max_angular_velocity": 2.0,
             }],
         ),
     ])

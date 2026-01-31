@@ -40,6 +40,8 @@ setup(
             "arm_teleop_node=teleop_system.modules.arm_teleop.arm_teleop_node:main",
             "locomotion_node=teleop_system.modules.locomotion.locomotion_node:main",
             "hand_teleop_node=teleop_system.modules.hand_teleop.hand_teleop_node:main",
+            "camera_teleop_node=teleop_system.modules.camera.camera_node:main",
+            "dummy_hmd_pub=teleop_system.simulators.dummy_hmd_pub:main",
         ],
     },
     python_requires=">=3.10",

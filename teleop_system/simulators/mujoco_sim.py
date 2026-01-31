@@ -159,12 +159,27 @@ class MuJoCoSimulator(ISimulator):
         depth = self._renderer.render()
         self._renderer.disable_depth_rendering()
 
+        # Compute intrinsics from MuJoCo camera fovy
+        height, width = rgb.shape[0], rgb.shape[1]
+        fovy_deg = self._model.cam_fovy[cam_id]
+        fovy_rad = np.deg2rad(fovy_deg)
+        fy = height / (2.0 * np.tan(fovy_rad / 2.0))
+        fx = fy  # square pixels
+        cx = width / 2.0
+        cy = height / 2.0
+        intrinsics = np.array([
+            [fx, 0.0, cx],
+            [0.0, fy, cy],
+            [0.0, 0.0, 1.0],
+        ])
+
         return RGBDFrame(
             rgb=rgb,
             depth=depth,
+            intrinsics=intrinsics,
             timestamp=self._data.time,
-            width=rgb.shape[1],
-            height=rgb.shape[0],
+            width=width,
+            height=height,
         )
 
     def get_joint_names(self) -> list[str]:

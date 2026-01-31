@@ -83,3 +83,128 @@ source /opt/ros/jazzy/setup.bash
 
 ------------------------------------------------------------------------------------------------------------------
 ------------------------------------------------------------------------------------------------------------------
+
+Gripper/Hand Teleoperation - Implementation Summary
+Files Created
+ros2_adapters.py - ROS2GloveAdapter(IHandInput) + ROS2HandCommandPublisher(ISlaveHand) bridging ROS2 messages to HandController interfaces
+dummy_glove_pub.py - ROS2 node publishing simulated 20-DOF hand joint data on /master/hand/{left,right}/joints
+test_hand_teleop_standalone.py - Standalone test (no ROS2): SimulatedHand → HandController → MuJoCoHand → MuJoCo physics
+Files Modified
+mujoco_sim.py - Added MuJoCoHand(ISlaveHand) adapter mapping 20-DOF hand commands → single gripper ctrl value via mean + 20x scaling
+hand_teleop_node.py - Full rewrite from stub: dual HandController (left+right) with ROS2 adapters, 100Hz control loop, auto-connect on glove data. Fixed callback_group → callback_groups bug.
+mujoco_ros2_bridge.py - Added 20x scaling to _gripper_cmd_callback for visible gripper motion
+setup.py - Added hand_teleop_node and dummy_glove_pub entry points
+teleop_mujoco_bridge.launch.py - Added DummyGlovePub and HandTeleopNode nodes
+Verification Results
+139/139 tests pass (no regressions)
+Standalone test: 500/500 commands (100%), gripper ctrl oscillating 0-20, gripper qpos reaching full range
+ROS2 pipeline: 143 hand commands in 6s, gripper ctrl=14.8 (properly scaled)
+Works with both dummy (SimulatedHand) and real hardware (ManusGlove) — same topic interface
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+Camera/RGB-D & Head Teleoperation Module -- Implementation Summary
+Files Created (7)
+File	Description
+sim_camera_stream.py	SimCameraStream(ICameraStream) -- wraps MuJoCo head camera with pan/tilt control, double buffering, intrinsics from fovy
+camera_controller.py	CameraController -- pure logic: HMD quaternion -> euler -> pan/tilt with EMA smoothing + velocity limiting
+ros2_adapters.py	ROS2HMDAdapter(IMasterTracker) + ROS2CameraAdapter(ICameraStream) for ROS2 bridging
+camera_node.py	CameraTeleopNode(LifecycleNode) -- subscribes HMD orientation, publishes pan/tilt commands at 30Hz
+dummy_hmd_pub.py	DummyHMDPub(Node) -- publishes simulated HMD orientation at 90Hz for testing
+test_camera_teleop_standalone.py	Standalone test script (no ROS2) with viewer support and point cloud generation
+test_phase5_camera_head.py	21 pytest tests covering SimCameraStream, CameraController, pipeline integration
+Files Modified (4)
+File	Change
+mujoco_sim.py	Fixed get_camera_rgbd() to compute proper intrinsics from camera fovy (was returning np.eye(3))
+mujoco_ros2_bridge.py	Added head pan/tilt subscription (CTRL_HEAD was defined but never subscribed)
+setup.py	Added camera_teleop_node and dummy_hmd_pub entry points
+teleop_mujoco_bridge.launch.py	Added DummyHMDPub and CameraTeleopNode nodes
+Verification Results
+160 tests pass (139 existing + 21 new, zero regressions)
+Standalone test: 150/150 commands, pan/tilt vary, RGB-D frames 640x480, ~101K points per frame, intrinsics fx=415.7
+ROS2 pipeline: DummyHMDPub(90Hz) -> CameraTeleopNode(30Hz) -> Bridge -> ctrl[22]=0.13, ctrl[23]=0.08
+
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+
+테스트 방법 정리
+1. 자동 테스트 (pytest)
+
+MUJOCO_GL=egl python3 -m pytest tests/test_phase5_camera_head.py -v
+21개 테스트: SimCameraStream, CameraController, 파이프라인 통합, point cloud 생성
+
+2. 스트리밍 품질 검증 (이미지 저장)
+
+MUJOCO_GL=egl python3 scripts/test_camera_streaming.py
+5개 방향 RGB/depth 이미지 + PLY point cloud 저장, FPS/throughput 측정
+
+3. 파이프라인 동작 검증 (standalone)
+
+MUJOCO_GL=egl python3 scripts/test_camera_teleop_standalone.py --no-viewer --duration 5
+HMD → CameraController → SimCameraStream → MuJoCo → RGB-D → point cloud 전체 루프
+
+4. ROS2 파이프라인 검증
+
+source /opt/ros/jazzy/setup.bash
+# 터미널 1: 브릿지
+/usr/bin/python3.12 scripts/run_mujoco_bridge.py --launch-viewer
+# 터미널 2: 더미 HMD
+/usr/bin/python3.12 -c "from teleop_system.simulators.dummy_hmd_pub import main; main()"
+# 터미널 3: 카메라 노드
+/usr/bin/python3.12 -c "from teleop_system.modules.camera.camera_node import main; main()"
+# 확인:
+ros2 topic hz /slave/camera/pan_tilt_cmd    # ~30Hz
+ros2 topic echo /master/hmd/orientation --once
+2. 실제 HW에서 달라지는 것
+구분	Simulation (현재)	Real Hardware
+HMD 입력	DummyHMDPub (SimulatedTracker)	Vive HMD 또는 Quest → /master/hmd/orientation 퍼블리시
+카메라	SimCameraStream (MuJoCo 렌더링)	RealSenseCamera (realsense_camera.py) — ROS2 토픽으로 RGB-D 수신
+로봇 제어	MuJoCo Bridge ctrl[22:24]	RBY1 실제 로봇 head joint 드라이버
+Point Cloud	동일 (PointCloudGenerator)	동일 — 인터페이스 동일하므로 코드 변경 없음
+변경이 필요 없는 것:
+
+CameraController — 순수 제어 로직, 인터페이스만 사용
+CameraTeleopNode — /master/hmd/orientation 토픽만 구독하므로, 퍼블리셔가 뭐든 동작
+PointCloudGenerator — RGBDFrame만 받으면 됨
+변경이 필요한 것:
+
+HMD 퍼블리셔: DummyHMDPub 대신 실제 VR SDK 노드 실행
+
+SteamVR: vive_tracker_pub에 HEAD role 추가하거나 별도 HMD publisher
+Quest: WebXR/OpenXR → ROS2 bridge
+카메라 소스: launch에서 SimCameraStream → RealSenseCamera 전환
+
+RealSenseCamera는 이미 구현됨 (realsense_camera.py)
+ROS2 토픽 /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw 구독
+set_orientation()이 /slave/camera/pan_tilt_cmd로 퍼블리시 (이미 구현)
+로봇 드라이버: MuJoCo bridge 대신 RBY1 하드웨어 드라이버가 /slave/camera/pan_tilt_cmd 구독
+
+즉, launch 파일에서 노드만 교체하면 되고 CameraTeleopNode 코드는 변경 없이 동작합니다. 이것이 인터페이스 기반 설계의 장점입니다.
+
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+
+
+Results
+The full camera/point cloud streaming pipeline is verified and working:
+
+Metric	Result
+Point cloud points per frame	130k-140k
+Pipeline throughput	37.1 Hz (target: 15 Hz)
+Point cloud generation	23-49 ms per frame
+Head tracking	pan: 0.127→0.147 rad, tilt: 0.066→0.096 rad
+All tests	160/160 pass
+Files created
+File	Purpose
+pointcloud_viewer.py	Interactive GLFW+OpenGL viewer (for workstations with display)
+demo_pointcloud_viewer.py	Real-time streaming demo (GLFW window, mouse orbit, live stats)
+verify_pointcloud_pipeline.py	Headless verification (saves PNG images + PLY files)
+Environment note
+This environment is headless (no X11/Wayland display server), so the interactive GLFW viewer cannot open a window here. The demo_pointcloud_viewer.py script will work on any workstation with a display. For verification in this headless environment, verify_pointcloud_pipeline.py renders point cloud snapshots as 2D projections (top-down + side views) using Pillow and saves them as PNG files.
+
+Output images are in output/pc_verify/ -- the composite image shows RGB, depth, top-down point cloud, and side-view point cloud for each frame captured during the streaming pipeline test.

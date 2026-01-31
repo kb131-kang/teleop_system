@@ -139,6 +139,11 @@ if _ROS2_AVAILABLE:
                 lambda msg: self._gripper_cmd_callback(msg, CTRL_LEFT_GRIPPER),
                 cmd_qos,
             )
+            self.create_subscription(
+                JointState, TopicNames.CAMERA_PAN_TILT_CMD,
+                lambda msg: self._joint_cmd_callback(msg, CTRL_HEAD),
+                cmd_qos,
+            )
 
             # ── Publisher for joint states ──
             sensor_qos = get_qos_profile(QoSPreset.SENSOR_DATA)
