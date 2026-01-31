@@ -91,6 +91,9 @@ class TopicNames:
 
     SYSTEM_STATUS = "/system/status"
 
+    # MuJoCo simulation feedback
+    MUJOCO_JOINT_STATES = "/mujoco/joint_states"
+
 
 class ServiceNames:
     """Standard ROS2 service names for the teleoperation system."""

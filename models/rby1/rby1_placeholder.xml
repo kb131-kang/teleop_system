@@ -1,0 +1,515 @@
+<!-- RB-Y1 Humanoid Robot with DG-5F Dexterous Hands - MuJoCo Model
+     Rainbow Robotics RB-Y1: Mobile base + 6-DOF torso + 2x7-DOF arms + 2x20-DOF hands + 2-DOF head
+     Total: 62 actuated joints (no free joint - base fixed for sim testing)
+
+     Joint index mapping (qpos/ctrl):
+       [0:6]   Torso (6 joints)
+       [6:13]  Left arm (7 joints)
+       [13:33] Left hand DG-5F (20 joints: 5 fingers x 4)
+       [33:40] Right arm (7 joints)
+       [40:60] Right hand DG-5F (20 joints: 5 fingers x 4)
+       [60:62] Head pan-tilt (2 joints)
+
+     NOTE: Mobile base is fixed in this model. For locomotion testing,
+     add a freejoint to base_link and adjust index offsets accordingly.
+-->
+<mujoco model="rby1_dg5f_teleop">
+  <compiler angle="radian" autolimits="true" />
+
+  <option timestep="0.002" gravity="0 0 -9.81">
+    <flag contact="enable" />
+  </option>
+
+  <default>
+    <joint damping="5" armature="0.01" />
+    <geom condim="4" friction="1 0.5 0.01" />
+
+    <default class="torso">
+      <joint damping="20" armature="0.1" />
+      <geom rgba="0.25 0.25 0.30 1" />
+    </default>
+
+    <default class="arm">
+      <joint damping="10" armature="0.05" />
+      <geom rgba="0.45 0.45 0.50 1" />
+    </default>
+
+    <default class="hand">
+      <joint damping="1" armature="0.002" />
+      <geom rgba="0.65 0.65 0.70 1" />
+    </default>
+
+    <default class="head">
+      <joint damping="5" armature="0.02" />
+      <geom rgba="0.20 0.20 0.22 1" />
+    </default>
+  </default>
+
+  <asset>
+    <texture name="grid_tex" type="2d" builtin="checker" width="512" height="512"
+             rgb1="0.85 0.85 0.85" rgb2="0.70 0.70 0.70" />
+    <material name="grid_mat" texture="grid_tex" texrepeat="8 8" reflectance="0.1" />
+    <material name="base_mat" rgba="0.15 0.15 0.18 1" />
+    <material name="joint_mat" rgba="0.10 0.10 0.60 1" />
+    <material name="camera_mat" rgba="0.08 0.08 0.08 1" />
+    <material name="finger_mat" rgba="0.70 0.70 0.75 1" />
+    <material name="palm_mat" rgba="0.55 0.55 0.60 1" />
+  </asset>
+
+  <worldbody>
+    <!-- Ground plane -->
+    <geom name="floor" type="plane" size="5 5 0.1" material="grid_mat" />
+
+    <!-- Lighting -->
+    <light name="top_light" directional="true" diffuse="0.8 0.8 0.8"
+           specular="0.3 0.3 0.3" pos="0 0 5" dir="0 0 -1" />
+    <light name="fill_light" directional="true" diffuse="0.4 0.4 0.4"
+           pos="2 2 3" dir="-0.5 -0.5 -1" />
+
+    <!-- ============================================================ -->
+    <!-- ROBOT BASE (fixed to world, mobile base omitted for now)     -->
+    <!-- ============================================================ -->
+    <body name="base_link" pos="0 0 0.30">
+      <geom name="base_body" type="box" size="0.20 0.18 0.10" material="base_mat" />
+      <!-- Decorative wheels -->
+      <geom name="wheel_fl" type="cylinder" size="0.05 0.02" pos="0.12 0.16 -0.08"
+            euler="1.5708 0 0" rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" />
+      <geom name="wheel_fr" type="cylinder" size="0.05 0.02" pos="0.12 -0.16 -0.08"
+            euler="1.5708 0 0" rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" />
+      <geom name="wheel_rl" type="cylinder" size="0.05 0.02" pos="-0.12 0.16 -0.08"
+            euler="1.5708 0 0" rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" />
+      <geom name="wheel_rr" type="cylinder" size="0.05 0.02" pos="-0.12 -0.16 -0.08"
+            euler="1.5708 0 0" rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" />
+
+      <!-- ======================================================== -->
+      <!-- TORSO: 6 DOF (joints 0-5)                                -->
+      <!-- ======================================================== -->
+      <body name="torso_link_1" pos="0 0 0.12">
+        <joint name="torso_j1" class="torso" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+        <geom name="torso_1" class="torso" type="cylinder" size="0.09 0.04" />
+        <geom name="torso_j1_vis" type="sphere" size="0.025" material="joint_mat"
+              contype="0" conaffinity="0" />
+
+        <body name="torso_link_2" pos="0 0 0.07">
+          <joint name="torso_j2" class="torso" type="hinge" axis="0 1 0" range="-0.785 0.785" />
+          <geom name="torso_2" class="torso" type="cylinder" size="0.085 0.035" />
+
+          <body name="torso_link_3" pos="0 0 0.065">
+            <joint name="torso_j3" class="torso" type="hinge" axis="1 0 0" range="-0.785 0.785" />
+            <geom name="torso_3" class="torso" type="cylinder" size="0.085 0.035" />
+
+            <body name="torso_link_4" pos="0 0 0.065">
+              <joint name="torso_j4" class="torso" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+              <geom name="torso_4" class="torso" type="cylinder" size="0.09 0.035" />
+
+              <body name="torso_link_5" pos="0 0 0.065">
+                <joint name="torso_j5" class="torso" type="hinge" axis="0 1 0" range="-0.785 0.785" />
+                <geom name="torso_5" class="torso" type="cylinder" size="0.09 0.035" />
+
+                <body name="torso_link" pos="0 0 0.065">
+                  <joint name="torso_j6" class="torso" type="hinge" axis="1 0 0" range="-0.785 0.785" />
+                  <geom name="torso_main" class="torso" type="box" size="0.12 0.20 0.06" />
+
+                  <!-- ======================================================== -->
+                  <!-- LEFT ARM: 7 DOF (joints 6-12)                            -->
+                  <!-- ======================================================== -->
+                  <body name="l_shoulder_link" pos="0 0.22 0">
+                    <joint name="l_arm_j1" class="arm" type="hinge" axis="0 1 0" range="-3.14 3.14" />
+                    <geom name="l_shoulder" class="arm" type="sphere" size="0.045" />
+
+                    <body name="l_upper_arm_link" pos="0 0.04 0">
+                      <joint name="l_arm_j2" class="arm" type="hinge" axis="1 0 0" range="-2.094 2.094" />
+                      <geom name="l_upper_arm_j" class="arm" type="sphere" size="0.035" />
+
+                      <body name="l_upper_arm_2" pos="0 0 0">
+                        <joint name="l_arm_j3" class="arm" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+                        <geom name="l_upper_arm" class="arm" type="capsule"
+                              fromto="0 0 0 0 0 -0.28" size="0.035" />
+
+                        <body name="l_elbow_link" pos="0 0 -0.28">
+                          <joint name="l_arm_j4" class="arm" type="hinge" axis="0 1 0" range="-2.356 0.1" />
+                          <geom name="l_elbow" class="arm" type="sphere" size="0.035" />
+
+                          <body name="l_forearm_link" pos="0 0 0">
+                            <joint name="l_arm_j5" class="arm" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+                            <geom name="l_forearm" class="arm" type="capsule"
+                                  fromto="0 0 0 0 0 -0.25" size="0.030" />
+
+                            <body name="l_wrist_link" pos="0 0 -0.25">
+                              <joint name="l_arm_j6" class="arm" type="hinge" axis="0 1 0" range="-1.571 1.571" />
+                              <geom name="l_wrist_j" class="arm" type="sphere" size="0.022" />
+
+                              <body name="left_hand_link" pos="0 0 0">
+                                <joint name="l_arm_j7" class="arm" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+                                <geom name="l_wrist" class="arm" type="sphere" size="0.028" />
+
+                                <!-- LEFT HAND PALM -->
+                                <geom name="l_palm" type="box" size="0.04 0.035 0.012" pos="0 0 -0.04"
+                                      material="palm_mat" />
+
+                                <!-- ============================================ -->
+                                <!-- LEFT HAND DG-5F: 20 DOF (joints 13-32)       -->
+                                <!-- Finger order: thumb, index, middle, ring, pinky -->
+                                <!-- Each finger: spread, mcp, pip, dip            -->
+                                <!-- ============================================ -->
+
+                                <!-- LEFT THUMB (joints 13-16) -->
+                                <body name="l_thumb_proximal" pos="0.025 0.025 -0.035" euler="0 -0.3 0.5">
+                                  <joint name="l_thumb_spread" class="hand" type="hinge" axis="0 0 1" range="-0.5 0.5" />
+                                  <joint name="l_thumb_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="l_thumb_prox" type="capsule" fromto="0 0 0 0.035 0 0" size="0.008"
+                                        material="finger_mat" />
+                                  <body name="l_thumb_middle" pos="0.035 0 0">
+                                    <joint name="l_thumb_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="l_thumb_mid" type="capsule" fromto="0 0 0 0.028 0 0" size="0.007"
+                                          material="finger_mat" />
+                                    <body name="l_thumb_distal" pos="0.028 0 0">
+                                      <joint name="l_thumb_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="l_thumb_dist" type="capsule" fromto="0 0 0 0.020 0 0" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- LEFT INDEX (joints 17-20) -->
+                                <body name="l_index_proximal" pos="0.025 0.018 -0.065">
+                                  <joint name="l_index_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="l_index_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="l_index_prox" type="capsule" fromto="0 0 0 0 0 -0.038" size="0.007"
+                                        material="finger_mat" />
+                                  <body name="l_index_middle" pos="0 0 -0.038">
+                                    <joint name="l_index_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="l_index_mid" type="capsule" fromto="0 0 0 0 0 -0.025" size="0.006"
+                                          material="finger_mat" />
+                                    <body name="l_index_distal" pos="0 0 -0.025">
+                                      <joint name="l_index_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="l_index_dist" type="capsule" fromto="0 0 0 0 0 -0.018" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- LEFT MIDDLE (joints 21-24) -->
+                                <body name="l_middle_proximal" pos="0.008 0.018 -0.068">
+                                  <joint name="l_middle_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="l_middle_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="l_middle_prox" type="capsule" fromto="0 0 0 0 0 -0.040" size="0.007"
+                                        material="finger_mat" />
+                                  <body name="l_middle_middle" pos="0 0 -0.040">
+                                    <joint name="l_middle_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="l_middle_mid" type="capsule" fromto="0 0 0 0 0 -0.028" size="0.006"
+                                          material="finger_mat" />
+                                    <body name="l_middle_distal" pos="0 0 -0.028">
+                                      <joint name="l_middle_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="l_middle_dist" type="capsule" fromto="0 0 0 0 0 -0.020" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- LEFT RING (joints 25-28) -->
+                                <body name="l_ring_proximal" pos="-0.008 0.018 -0.065">
+                                  <joint name="l_ring_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="l_ring_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="l_ring_prox" type="capsule" fromto="0 0 0 0 0 -0.036" size="0.007"
+                                        material="finger_mat" />
+                                  <body name="l_ring_middle" pos="0 0 -0.036">
+                                    <joint name="l_ring_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="l_ring_mid" type="capsule" fromto="0 0 0 0 0 -0.024" size="0.006"
+                                          material="finger_mat" />
+                                    <body name="l_ring_distal" pos="0 0 -0.024">
+                                      <joint name="l_ring_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="l_ring_dist" type="capsule" fromto="0 0 0 0 0 -0.018" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- LEFT PINKY (joints 29-32) -->
+                                <body name="l_pinky_proximal" pos="-0.022 0.018 -0.060">
+                                  <joint name="l_pinky_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="l_pinky_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="l_pinky_prox" type="capsule" fromto="0 0 0 0 0 -0.032" size="0.006"
+                                        material="finger_mat" />
+                                  <body name="l_pinky_middle" pos="0 0 -0.032">
+                                    <joint name="l_pinky_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="l_pinky_mid" type="capsule" fromto="0 0 0 0 0 -0.020" size="0.005"
+                                          material="finger_mat" />
+                                    <body name="l_pinky_distal" pos="0 0 -0.020">
+                                      <joint name="l_pinky_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="l_pinky_dist" type="capsule" fromto="0 0 0 0 0 -0.016" size="0.005"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                              </body><!-- left_hand_link -->
+                            </body><!-- l_wrist_link -->
+                          </body><!-- l_forearm_link -->
+                        </body><!-- l_elbow_link -->
+                      </body><!-- l_upper_arm_2 -->
+                    </body><!-- l_upper_arm_link -->
+                  </body><!-- l_shoulder_link -->
+
+                  <!-- ======================================================== -->
+                  <!-- RIGHT ARM: 7 DOF (joints 33-39)                          -->
+                  <!-- ======================================================== -->
+                  <body name="r_shoulder_link" pos="0 -0.22 0">
+                    <joint name="r_arm_j1" class="arm" type="hinge" axis="0 1 0" range="-3.14 3.14" />
+                    <geom name="r_shoulder" class="arm" type="sphere" size="0.045" />
+
+                    <body name="r_upper_arm_link" pos="0 -0.04 0">
+                      <joint name="r_arm_j2" class="arm" type="hinge" axis="1 0 0" range="-2.094 2.094" />
+                      <geom name="r_upper_arm_j" class="arm" type="sphere" size="0.035" />
+
+                      <body name="r_upper_arm_2" pos="0 0 0">
+                        <joint name="r_arm_j3" class="arm" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+                        <geom name="r_upper_arm" class="arm" type="capsule"
+                              fromto="0 0 0 0 0 -0.28" size="0.035" />
+
+                        <body name="r_elbow_link" pos="0 0 -0.28">
+                          <joint name="r_arm_j4" class="arm" type="hinge" axis="0 1 0" range="-2.356 0.1" />
+                          <geom name="r_elbow" class="arm" type="sphere" size="0.035" />
+
+                          <body name="r_forearm_link" pos="0 0 0">
+                            <joint name="r_arm_j5" class="arm" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+                            <geom name="r_forearm" class="arm" type="capsule"
+                                  fromto="0 0 0 0 0 -0.25" size="0.030" />
+
+                            <body name="r_wrist_link" pos="0 0 -0.25">
+                              <joint name="r_arm_j6" class="arm" type="hinge" axis="0 1 0" range="-1.571 1.571" />
+                              <geom name="r_wrist_j" class="arm" type="sphere" size="0.022" />
+
+                              <body name="right_hand_link" pos="0 0 0">
+                                <joint name="r_arm_j7" class="arm" type="hinge" axis="0 0 1" range="-2.618 2.618" />
+                                <geom name="r_wrist" class="arm" type="sphere" size="0.028" />
+
+                                <!-- RIGHT HAND PALM -->
+                                <geom name="r_palm" type="box" size="0.04 0.035 0.012" pos="0 0 -0.04"
+                                      material="palm_mat" />
+
+                                <!-- ============================================ -->
+                                <!-- RIGHT HAND DG-5F: 20 DOF (joints 40-59)      -->
+                                <!-- ============================================ -->
+
+                                <!-- RIGHT THUMB (joints 40-43) -->
+                                <body name="r_thumb_proximal" pos="0.025 -0.025 -0.035" euler="0 -0.3 -0.5">
+                                  <joint name="r_thumb_spread" class="hand" type="hinge" axis="0 0 1" range="-0.5 0.5" />
+                                  <joint name="r_thumb_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="r_thumb_prox" type="capsule" fromto="0 0 0 0.035 0 0" size="0.008"
+                                        material="finger_mat" />
+                                  <body name="r_thumb_middle" pos="0.035 0 0">
+                                    <joint name="r_thumb_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="r_thumb_mid" type="capsule" fromto="0 0 0 0.028 0 0" size="0.007"
+                                          material="finger_mat" />
+                                    <body name="r_thumb_distal" pos="0.028 0 0">
+                                      <joint name="r_thumb_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="r_thumb_dist" type="capsule" fromto="0 0 0 0.020 0 0" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- RIGHT INDEX (joints 44-47) -->
+                                <body name="r_index_proximal" pos="0.025 -0.018 -0.065">
+                                  <joint name="r_index_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="r_index_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="r_index_prox" type="capsule" fromto="0 0 0 0 0 -0.038" size="0.007"
+                                        material="finger_mat" />
+                                  <body name="r_index_middle" pos="0 0 -0.038">
+                                    <joint name="r_index_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="r_index_mid" type="capsule" fromto="0 0 0 0 0 -0.025" size="0.006"
+                                          material="finger_mat" />
+                                    <body name="r_index_distal" pos="0 0 -0.025">
+                                      <joint name="r_index_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="r_index_dist" type="capsule" fromto="0 0 0 0 0 -0.018" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- RIGHT MIDDLE (joints 48-51) -->
+                                <body name="r_middle_proximal" pos="0.008 -0.018 -0.068">
+                                  <joint name="r_middle_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="r_middle_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="r_middle_prox" type="capsule" fromto="0 0 0 0 0 -0.040" size="0.007"
+                                        material="finger_mat" />
+                                  <body name="r_middle_middle" pos="0 0 -0.040">
+                                    <joint name="r_middle_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="r_middle_mid" type="capsule" fromto="0 0 0 0 0 -0.028" size="0.006"
+                                          material="finger_mat" />
+                                    <body name="r_middle_distal" pos="0 0 -0.028">
+                                      <joint name="r_middle_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="r_middle_dist" type="capsule" fromto="0 0 0 0 0 -0.020" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- RIGHT RING (joints 52-55) -->
+                                <body name="r_ring_proximal" pos="-0.008 -0.018 -0.065">
+                                  <joint name="r_ring_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="r_ring_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="r_ring_prox" type="capsule" fromto="0 0 0 0 0 -0.036" size="0.007"
+                                        material="finger_mat" />
+                                  <body name="r_ring_middle" pos="0 0 -0.036">
+                                    <joint name="r_ring_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="r_ring_mid" type="capsule" fromto="0 0 0 0 0 -0.024" size="0.006"
+                                          material="finger_mat" />
+                                    <body name="r_ring_distal" pos="0 0 -0.024">
+                                      <joint name="r_ring_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="r_ring_dist" type="capsule" fromto="0 0 0 0 0 -0.018" size="0.006"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                                <!-- RIGHT PINKY (joints 56-59) -->
+                                <body name="r_pinky_proximal" pos="-0.022 -0.018 -0.060">
+                                  <joint name="r_pinky_spread" class="hand" type="hinge" axis="0 0 1" range="-0.3 0.3" />
+                                  <joint name="r_pinky_mcp" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                  <geom name="r_pinky_prox" type="capsule" fromto="0 0 0 0 0 -0.032" size="0.006"
+                                        material="finger_mat" />
+                                  <body name="r_pinky_middle" pos="0 0 -0.032">
+                                    <joint name="r_pinky_pip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                    <geom name="r_pinky_mid" type="capsule" fromto="0 0 0 0 0 -0.020" size="0.005"
+                                          material="finger_mat" />
+                                    <body name="r_pinky_distal" pos="0 0 -0.020">
+                                      <joint name="r_pinky_dip" class="hand" type="hinge" axis="0 1 0" range="0 1.57" />
+                                      <geom name="r_pinky_dist" type="capsule" fromto="0 0 0 0 0 -0.016" size="0.005"
+                                            material="finger_mat" />
+                                    </body>
+                                  </body>
+                                </body>
+
+                              </body><!-- right_hand_link -->
+                            </body><!-- r_wrist_link -->
+                          </body><!-- r_forearm_link -->
+                        </body><!-- r_elbow_link -->
+                      </body><!-- r_upper_arm_2 -->
+                    </body><!-- r_upper_arm_link -->
+                  </body><!-- r_shoulder_link -->
+
+                  <!-- ======================================================== -->
+                  <!-- HEAD: 2 DOF pan-tilt + camera (joints 60-61)             -->
+                  <!-- ======================================================== -->
+                  <body name="head_pan_link" pos="0 0 0.10">
+                    <joint name="head_pan" class="head" type="hinge" axis="0 0 1" range="-2.094 2.094" />
+                    <geom name="neck" class="head" type="cylinder" size="0.035 0.04" />
+
+                    <body name="head_camera_link" pos="0 0 0.07">
+                      <joint name="head_tilt" class="head" type="hinge" axis="0 1 0" range="-0.785 0.785" />
+                      <geom name="head" class="head" type="box" size="0.06 0.05 0.04" />
+                      <!-- Camera lens -->
+                      <geom name="camera_lens" type="cylinder" size="0.015 0.008" pos="0.06 0 0"
+                            euler="0 1.5708 0" material="camera_mat" contype="0" conaffinity="0" />
+                      <!-- RGB-D Camera -->
+                      <camera name="head_camera" pos="0.065 0 0" xyaxes="0 -1 0 0 0 1"
+                              fovy="60" />
+                      <!-- Top-down overview camera for debugging -->
+                    </body>
+                  </body>
+
+                </body><!-- torso_link -->
+              </body><!-- torso_link_5 -->
+            </body><!-- torso_link_4 -->
+          </body><!-- torso_link_3 -->
+        </body><!-- torso_link_2 -->
+      </body><!-- torso_link_1 -->
+    </body><!-- base_link -->
+
+    <!-- Overview camera (attached to world, not robot) -->
+    <camera name="overview" pos="1.5 0 1.2" xyaxes="0 1 0 -0.4 0 0.9" fovy="50" />
+    <camera name="front" pos="1.2 0 0.8" xyaxes="0 1 0 -0.3 0 0.95" fovy="45" />
+  </worldbody>
+
+  <!-- ================================================================ -->
+  <!-- ACTUATORS: Position servos for all 62 joints                     -->
+  <!-- ================================================================ -->
+  <actuator>
+    <!-- Torso (6 actuators, indices 0-5) -->
+    <position name="act_torso_j1" joint="torso_j1" kp="800" kv="80" />
+    <position name="act_torso_j2" joint="torso_j2" kp="800" kv="80" />
+    <position name="act_torso_j3" joint="torso_j3" kp="800" kv="80" />
+    <position name="act_torso_j4" joint="torso_j4" kp="600" kv="60" />
+    <position name="act_torso_j5" joint="torso_j5" kp="600" kv="60" />
+    <position name="act_torso_j6" joint="torso_j6" kp="600" kv="60" />
+
+    <!-- Left arm (7 actuators, indices 6-12) -->
+    <position name="act_l_arm_j1" joint="l_arm_j1" kp="400" kv="40" />
+    <position name="act_l_arm_j2" joint="l_arm_j2" kp="400" kv="40" />
+    <position name="act_l_arm_j3" joint="l_arm_j3" kp="300" kv="30" />
+    <position name="act_l_arm_j4" joint="l_arm_j4" kp="300" kv="30" />
+    <position name="act_l_arm_j5" joint="l_arm_j5" kp="200" kv="20" />
+    <position name="act_l_arm_j6" joint="l_arm_j6" kp="200" kv="20" />
+    <position name="act_l_arm_j7" joint="l_arm_j7" kp="200" kv="20" />
+
+    <!-- Left hand DG-5F (20 actuators, indices 13-32) -->
+    <!-- Thumb -->
+    <position name="act_l_thumb_spread" joint="l_thumb_spread" kp="30" kv="3" />
+    <position name="act_l_thumb_mcp"    joint="l_thumb_mcp"    kp="30" kv="3" />
+    <position name="act_l_thumb_pip"    joint="l_thumb_pip"    kp="20" kv="2" />
+    <position name="act_l_thumb_dip"    joint="l_thumb_dip"    kp="15" kv="1.5" />
+    <!-- Index -->
+    <position name="act_l_index_spread" joint="l_index_spread" kp="25" kv="2.5" />
+    <position name="act_l_index_mcp"    joint="l_index_mcp"    kp="30" kv="3" />
+    <position name="act_l_index_pip"    joint="l_index_pip"    kp="20" kv="2" />
+    <position name="act_l_index_dip"    joint="l_index_dip"    kp="15" kv="1.5" />
+    <!-- Middle -->
+    <position name="act_l_middle_spread" joint="l_middle_spread" kp="25" kv="2.5" />
+    <position name="act_l_middle_mcp"    joint="l_middle_mcp"    kp="30" kv="3" />
+    <position name="act_l_middle_pip"    joint="l_middle_pip"    kp="20" kv="2" />
+    <position name="act_l_middle_dip"    joint="l_middle_dip"    kp="15" kv="1.5" />
+    <!-- Ring -->
+    <position name="act_l_ring_spread" joint="l_ring_spread" kp="25" kv="2.5" />
+    <position name="act_l_ring_mcp"    joint="l_ring_mcp"    kp="30" kv="3" />
+    <position name="act_l_ring_pip"    joint="l_ring_pip"    kp="20" kv="2" />
+    <position name="act_l_ring_dip"    joint="l_ring_dip"    kp="15" kv="1.5" />
+    <!-- Pinky -->
+    <position name="act_l_pinky_spread" joint="l_pinky_spread" kp="20" kv="2" />
+    <position name="act_l_pinky_mcp"    joint="l_pinky_mcp"    kp="25" kv="2.5" />
+    <position name="act_l_pinky_pip"    joint="l_pinky_pip"    kp="18" kv="1.8" />
+    <position name="act_l_pinky_dip"    joint="l_pinky_dip"    kp="12" kv="1.2" />
+
+    <!-- Right arm (7 actuators, indices 33-39) -->
+    <position name="act_r_arm_j1" joint="r_arm_j1" kp="400" kv="40" />
+    <position name="act_r_arm_j2" joint="r_arm_j2" kp="400" kv="40" />
+    <position name="act_r_arm_j3" joint="r_arm_j3" kp="300" kv="30" />
+    <position name="act_r_arm_j4" joint="r_arm_j4" kp="300" kv="30" />
+    <position name="act_r_arm_j5" joint="r_arm_j5" kp="200" kv="20" />
+    <position name="act_r_arm_j6" joint="r_arm_j6" kp="200" kv="20" />
+    <position name="act_r_arm_j7" joint="r_arm_j7" kp="200" kv="20" />
+
+    <!-- Right hand DG-5F (20 actuators, indices 40-59) -->
+    <!-- Thumb -->
+    <position name="act_r_thumb_spread" joint="r_thumb_spread" kp="30" kv="3" />
+    <position name="act_r_thumb_mcp"    joint="r_thumb_mcp"    kp="30" kv="3" />
+    <position name="act_r_thumb_pip"    joint="r_thumb_pip"    kp="20" kv="2" />
+    <position name="act_r_thumb_dip"    joint="r_thumb_dip"    kp="15" kv="1.5" />
+    <!-- Index -->
+    <position name="act_r_index_spread" joint="r_index_spread" kp="25" kv="2.5" />
+    <position name="act_r_index_mcp"    joint="r_index_mcp"    kp="30" kv="3" />
+    <position name="act_r_index_pip"    joint="r_index_pip"    kp="20" kv="2" />
+    <position name="act_r_index_dip"    joint="r_index_dip"    kp="15" kv="1.5" />
+    <!-- Middle -->
+    <position name="act_r_middle_spread" joint="r_middle_spread" kp="25" kv="2.5" />
+    <position name="act_r_middle_mcp"    joint="r_middle_mcp"    kp="30" kv="3" />
+    <position name="act_r_middle_pip"    joint="r_middle_pip"    kp="20" kv="2" />
+    <position name="act_r_middle_dip"    joint="r_middle_dip"    kp="15" kv="1.5" />
+    <!-- Ring -->
+    <position name="act_r_ring_spread" joint="r_ring_spread" kp="25" kv="2.5" />
+    <position name="act_r_ring_mcp"    joint="r_ring_mcp"    kp="30" kv="3" />
+    <position name="act_r_ring_pip"    joint="r_ring_pip"    kp="20" kv="2" />
+    <position name="act_r_ring_dip"    joint="r_ring_dip"    kp="15" kv="1.5" />
+    <!-- Pinky -->
+    <position name="act_r_pinky_spread" joint="r_pinky_spread" kp="20" kv="2" />
+    <position name="act_r_pinky_mcp"    joint="r_pinky_mcp"    kp="25" kv="2.5" />
+    <position name="act_r_pinky_pip"    joint="r_pinky_pip"    kp="18" kv="1.8" />
+    <position name="act_r_pinky_dip"    joint="r_pinky_dip"    kp="12" kv="1.2" />
+
+    <!-- Head (2 actuators, indices 60-61) -->
+    <position name="act_head_pan"  joint="head_pan"  kp="100" kv="10" />
+    <position name="act_head_tilt" joint="head_tilt" kp="100" kv="10" />
+  </actuator>
+
+</mujoco>

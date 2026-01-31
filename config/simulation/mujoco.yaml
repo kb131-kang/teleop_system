@@ -12,9 +12,9 @@ mujoco:
     iterations: 50
     tolerance: 1.0e-8
   model:
-    urdf_path: models/rby1/rby1.urdf
-    # If MJCF is available, prefer it over URDF conversion
-    mjcf_path: null
+    urdf_path: models/rby1/urdf/model.urdf
+    # Official RB-Y1A MuJoCo model with position actuators + head camera
+    mjcf_path: models/rby1/model_teleop.xml
   control:
     # Position control gains for MuJoCo actuators
     kp: 1000.0

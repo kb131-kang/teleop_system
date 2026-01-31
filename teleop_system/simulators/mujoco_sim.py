@@ -16,6 +16,7 @@ from teleop_system.interfaces.slave_robot import (
     ArmSide,
     IMobileBase,
     ISlaveArm,
+    ISlaveHand,
     JointState,
 )
 from teleop_system.utils.logger import get_logger
@@ -290,3 +291,74 @@ class MuJoCoBase(IMobileBase):
 
     def shutdown(self) -> None:
         self.stop()
+
+
+class MuJoCoHand(ISlaveHand):
+    """MuJoCo adapter for robot hand/gripper control via the simulator.
+
+    Maps 20-DOF hand joint commands to a single MuJoCo actuator ctrl index
+    by taking the mean of all joint positions (matching the MuJoCo ROS2 bridge
+    gripper_cmd_callback behavior). Reads gripper finger qpos for state feedback.
+    """
+
+    def __init__(
+        self,
+        simulator: MuJoCoSimulator,
+        side: str,
+        ctrl_index: int,
+        qpos_indices: list[int] | None = None,
+        ctrl_scale: float = 20.0,
+    ):
+        """Initialize MuJoCo hand adapter.
+
+        Args:
+            simulator: Shared MuJoCoSimulator instance.
+            side: 'left' or 'right'.
+            ctrl_index: Index into ctrl array for this gripper actuator
+                (right=24, left=25).
+            qpos_indices: Optional qpos indices for gripper finger joints
+                (for state readback). If None, get_joint_state returns zeros.
+            ctrl_scale: Scale factor applied to mean joint angle before
+                writing to ctrl (motor force). Default 20.0 matches
+                demo_teleop_sim.py behavior.
+        """
+        self._sim = simulator
+        self._side = side
+        self._ctrl_index = ctrl_index
+        self._qpos_indices = qpos_indices or []
+        self._ctrl_scale = ctrl_scale
+        self._last_command: np.ndarray | None = None
+
+    def initialize(self) -> bool:
+        return self._sim._initialized
+
+    def send_joint_command(self, joint_positions: np.ndarray) -> None:
+        if not self._sim._initialized:
+            return
+        scalar = float(np.mean(joint_positions)) * self._ctrl_scale
+        self._sim._data.ctrl[self._ctrl_index] = scalar
+        self._last_command = joint_positions.copy()
+
+    def get_joint_state(self) -> JointState:
+        if not self._sim._initialized:
+            return JointState()
+        if self._qpos_indices:
+            positions = np.array([self._sim._data.qpos[i] for i in self._qpos_indices])
+        else:
+            positions = np.zeros(0)
+        return JointState(
+            positions=positions,
+            timestamp=self._sim._data.time,
+        )
+
+    def get_joint_count(self) -> int:
+        return 20
+
+    def get_side(self) -> str:
+        return self._side
+
+    def is_connected(self) -> bool:
+        return self._sim._initialized
+
+    def shutdown(self) -> None:
+        pass

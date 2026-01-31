@@ -33,6 +33,13 @@ setup(
     entry_points={
         "console_scripts": [
             "run_teleop=scripts.run_teleop:main",
+            "mujoco_bridge=teleop_system.simulators.mujoco_ros2_bridge:main",
+            "dummy_tracker_pub=teleop_system.simulators.dummy_tracker_pub:main",
+            "dummy_glove_pub=teleop_system.simulators.dummy_glove_pub:main",
+            "vive_tracker_pub=teleop_system.devices.vive_tracker_pub:main",
+            "arm_teleop_node=teleop_system.modules.arm_teleop.arm_teleop_node:main",
+            "locomotion_node=teleop_system.modules.locomotion.locomotion_node:main",
+            "hand_teleop_node=teleop_system.modules.hand_teleop.hand_teleop_node:main",
         ],
     },
     python_requires=">=3.10",
