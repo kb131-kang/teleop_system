@@ -278,3 +278,87 @@ test_rgbd_streaming.py — Updated integration tests:
 
 Added _run_capture_loop() helper and _start_capture() method to pump server.capture() from a test thread (safe since MockCameraStream has no EGL dependency).
 All 179 tests pass.
+
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+
+1. First-person mode added to PointCloudViewer
+pointcloud_viewer.py
+
+Added first_person: bool = False parameter. In first-person mode:
+
+View: Fixed camera at origin with glScalef(1, -1, -1) to convert OpenCV camera frame (X-right, Y-down, Z-forward) to OpenGL (X-right, Y-up, Z-backward). This makes the viewer show exactly what the robot camera sees.
+Mouse drag: Left-drag still accumulates yaw/pitch and sends pan/tilt to the robot camera, but does NOT orbit the viewer itself. Right-drag and scroll are disabled.
+Grid/axes: Not drawn (they're meaningless in camera frame).
+Reset (R key): Resets robot camera to center (pan=0, tilt=0).
+2. Streaming client uses first-person view
+demo_rgbd_streaming.py
+
+Both --mode client and --mode local now:
+
+Create the viewer with first_person=True
+Set frame.extrinsics = np.eye(4) before generating point clouds, keeping points in camera frame instead of transforming to world frame
+The view automatically reflects the camera's perspective: when you drag the mouse, the robot head moves, new frames arrive from the new viewpoint, and the display updates
+3. Verification script
+verify_first_person_view.py
+
+Headless script that:
+
+Captures RGB-D from the robot's head camera
+Generates point cloud in camera frame
+Validates orientation (Z>0 = in front, X centered, Y>0 = below camera)
+Saves RGB image for visual inspection
+Supports --viewer flag to show interactive first-person viewer
+Supports --pan and --tilt flags to test at different head orientations
+Verification results
+All 3 orientation checks pass (Z forward, X centered, Y downward)
+RGB images confirm correct perspective at pan=0/tilt=0, pan=0.4, and tilt=0.5
+All 179 tests pass
+
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+1. Fixed colcon build infrastructure
+Created resource/teleop_system — empty ament index marker file
+Created scripts/init.py — makes scripts a proper package
+Modified setup.py — added data_files for launch files, config YAML files, and the ament resource marker so colcon build installs everything correctly
+2. Created ROS2 launch files
+launch/slave_mujoco.launch.py — Slave system only (MuJoCo bridge with configurable viewer, camera, physics rate)
+launch/master_sim.launch.py — Master system only (3 dummy publishers + 4 teleop nodes with configurable parameters)
+launch/teleop_sim_full.launch.py — Combined system using IncludeLaunchDescription to include both slave and master
+3. Created Python script launchers
+scripts/launch_slave.py — Launches MuJoCo bridge as subprocess
+scripts/launch_master.py — Launches all 7 master nodes with process lifecycle management
+scripts/launch_all.py — Launches all 8 nodes (slave + master) with Ctrl+C cleanup
+4. Created documentation
+docs/user_guide.md — 10 sections: overview, prerequisites, installation, quick start, running modes, camera/streaming, topics reference, configuration, standalone testing, troubleshooting
+docs/developer_guide.md — 10 sections: architecture, directory structure, interface contracts, adding modules, coordinate conventions, IK solver, MuJoCo integration, ROS2 patterns, testing, hardware integration
+5. Tests
+All 192 tests pass with no regressions.
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+1. Fixed colcon build infrastructure
+Created resource/teleop_system — empty ament index marker file
+Created scripts/init.py — makes scripts a proper package
+Modified setup.py — added data_files for launch files, config YAML files, and the ament resource marker so colcon build installs everything correctly
+2. Created ROS2 launch files
+launch/slave_mujoco.launch.py — Slave system only (MuJoCo bridge with configurable viewer, camera, physics rate)
+launch/master_sim.launch.py — Master system only (3 dummy publishers + 4 teleop nodes with configurable parameters)
+launch/teleop_sim_full.launch.py — Combined system using IncludeLaunchDescription to include both slave and master
+3. Created Python script launchers
+scripts/launch_slave.py — Launches MuJoCo bridge as subprocess
+scripts/launch_master.py — Launches all 7 master nodes with process lifecycle management
+scripts/launch_all.py — Launches all 8 nodes (slave + master) with Ctrl+C cleanup
+4. Created documentation
+docs/user_guide.md — 10 sections: overview, prerequisites, installation, quick start, running modes, camera/streaming, topics reference, configuration, standalone testing, troubleshooting
+docs/developer_guide.md — 10 sections: architecture, directory structure, interface contracts, adding modules, coordinate conventions, IK solver, MuJoCo integration, ROS2 patterns, testing, hardware integration
+5. Tests
+All 192 tests pass with no regressions.
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------

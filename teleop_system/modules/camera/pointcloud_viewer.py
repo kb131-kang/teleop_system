@@ -36,6 +36,13 @@ except ImportError:
 class PointCloudViewer:
     """Real-time 3D point cloud viewer with mouse orbit controls.
 
+    Supports two modes:
+      - **Orbit mode** (default): Third-person view, rotate/pan/zoom around scene.
+      - **First-person mode**: Camera-frame view, like looking through the robot's
+        eyes. Mouse drag only controls the robot camera pan/tilt; the viewer
+        itself stays fixed. Points must be in OpenCV camera frame (X-right,
+        Y-down, Z-forward).
+
     Usage:
         viewer = PointCloudViewer(title="Point Cloud")
         viewer.initialize()
@@ -46,11 +53,16 @@ class PointCloudViewer:
 
         viewer.shutdown()
 
-    Controls:
-        Left-drag:  Rotate (orbit)
+    Controls (orbit mode):
+        Left-drag:  Rotate (orbit) + robot camera sync
         Right-drag: Pan
         Scroll:     Zoom in/out
         R:          Reset view
+        Q/ESC:      Close
+
+    Controls (first-person mode):
+        Left-drag:  Move robot camera (pan/tilt)
+        R:          Reset robot camera to center
         Q/ESC:      Close
     """
 
@@ -62,6 +74,7 @@ class PointCloudViewer:
         point_size: float = 2.0,
         background: tuple[float, float, float] = (0.1, 0.1, 0.15),
         camera: ICameraStream | None = None,
+        first_person: bool = False,
     ):
         self._width = width
         self._height = height
@@ -69,8 +82,9 @@ class PointCloudViewer:
         self._point_size = point_size
         self._bg = background
         self._window = None
+        self._first_person = first_person
 
-        # Camera state (orbit camera)
+        # Camera state (orbit camera — only used when first_person=False)
         self._cam_distance = 5.0
         self._cam_yaw = 0.0      # degrees
         self._cam_pitch = -30.0   # degrees
@@ -200,29 +214,36 @@ class PointCloudViewer:
         aspect = w / max(h, 1)
         _gl_perspective(60.0, aspect, 0.1, 200.0)
 
-        # Set view matrix (orbit camera)
+        # Set view matrix
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
 
-        # Camera position from spherical coordinates
-        yaw_rad = math.radians(self._cam_yaw)
-        pitch_rad = math.radians(self._cam_pitch)
-        cx = self._cam_distance * math.cos(pitch_rad) * math.sin(yaw_rad)
-        cy = self._cam_distance * math.sin(pitch_rad)
-        cz = self._cam_distance * math.cos(pitch_rad) * math.cos(yaw_rad)
+        if self._first_person:
+            # First-person mode: fixed camera at origin.
+            # Points are in OpenCV camera frame (X-right, Y-down, Z-forward).
+            # OpenGL default camera looks down -Z with Y-up.
+            # Flip Y and Z to convert: x→x, y→-y, z→-z
+            GL.glScalef(1.0, -1.0, -1.0)
+        else:
+            # Orbit camera: position from spherical coordinates
+            yaw_rad = math.radians(self._cam_yaw)
+            pitch_rad = math.radians(self._cam_pitch)
+            cx = self._cam_distance * math.cos(pitch_rad) * math.sin(yaw_rad)
+            cy = self._cam_distance * math.sin(pitch_rad)
+            cz = self._cam_distance * math.cos(pitch_rad) * math.cos(yaw_rad)
 
-        target = self._cam_target + self._cam_pan_offset
-        _gl_look_at(
-            cx + target[0], cy + target[1], cz + target[2],
-            target[0], target[1], target[2],
-            0.0, 1.0, 0.0,
-        )
+            target = self._cam_target + self._cam_pan_offset
+            _gl_look_at(
+                cx + target[0], cy + target[1], cz + target[2],
+                target[0], target[1], target[2],
+                0.0, 1.0, 0.0,
+            )
 
-        # Draw grid on XZ plane
-        self._draw_grid()
+            # Draw grid on XZ plane (only in orbit mode)
+            self._draw_grid()
 
-        # Draw axes at origin
-        self._draw_axes()
+            # Draw axes at origin
+            self._draw_axes()
 
         # Draw point cloud
         if self._points is not None and self._point_count > 0:
@@ -262,15 +283,21 @@ class PointCloudViewer:
 
     def reset_view(self) -> None:
         """Reset camera to default position."""
-        self._cam_distance = 5.0
-        self._cam_yaw = 0.0
-        self._cam_pitch = -30.0
-        self._cam_pan_offset = np.array([0.0, 0.0, 0.0])
-        # Reset robot camera reference point
-        self._ref_yaw = self._cam_yaw
-        self._ref_pitch = self._cam_pitch
-        if self._camera is not None:
-            self._camera.set_orientation(0.0, 0.0)
+        if self._first_person:
+            # Reset accumulated yaw/pitch to reference (sends pan=0, tilt=0)
+            self._cam_yaw = self._ref_yaw
+            self._cam_pitch = self._ref_pitch
+            if self._camera is not None:
+                self._camera.set_orientation(0.0, 0.0)
+        else:
+            self._cam_distance = 5.0
+            self._cam_yaw = 0.0
+            self._cam_pitch = -30.0
+            self._cam_pan_offset = np.array([0.0, 0.0, 0.0])
+            self._ref_yaw = self._cam_yaw
+            self._ref_pitch = self._cam_pitch
+            if self._camera is not None:
+                self._camera.set_orientation(0.0, 0.0)
 
     def set_camera(self, camera: ICameraStream | None) -> None:
         """Set or clear the robot camera for viewer-to-robot sync.
@@ -351,13 +378,14 @@ class PointCloudViewer:
         self._mouse_y = y
 
         if self._left_pressed:
+            # Accumulate yaw/pitch (used for robot camera sync in both modes)
             self._cam_yaw += dx * 0.3
             self._cam_pitch += dy * 0.3
             self._cam_pitch = max(-89.0, min(89.0, self._cam_pitch))
             self._sync_camera_orientation()
 
-        if self._right_pressed:
-            # Pan: move target in screen-aligned plane
+        if self._right_pressed and not self._first_person:
+            # Pan: move target in screen-aligned plane (orbit mode only)
             yaw_rad = math.radians(self._cam_yaw)
             right = np.array([math.cos(yaw_rad), 0, -math.sin(yaw_rad)])
             up = np.array([0, 1, 0])
@@ -372,6 +400,8 @@ class PointCloudViewer:
             self._right_pressed = (action == glfw.PRESS)
 
     def _scroll_callback(self, window, xoff, yoff):
+        if self._first_person:
+            return  # no zoom in first-person mode
         self._cam_distance *= 0.9 if yoff > 0 else 1.1
         self._cam_distance = max(0.5, min(100.0, self._cam_distance))
 

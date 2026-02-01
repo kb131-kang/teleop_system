@@ -47,7 +47,7 @@ if _ROS2_AVAILABLE:
 
             # Parameters
             self.declare_parameter("rate_hz", 90.0)
-            self.declare_parameter("amplitude", 1.3)
+            self.declare_parameter("amplitude", 5.3)
             self.declare_parameter("frequency", 0.15)
 
             rate = self.get_parameter("rate_hz").get_parameter_value().double_value

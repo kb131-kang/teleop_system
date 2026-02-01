@@ -88,6 +88,9 @@ class TopicNames:
 
     CAMERA_RGBD = "/slave/camera/rgbd"
     CAMERA_PAN_TILT_CMD = "/slave/camera/pan_tilt_cmd"
+    CAMERA_COLOR_IMAGE = "/slave/camera/color/image_raw"
+    CAMERA_DEPTH_IMAGE = "/slave/camera/depth/image_raw"
+    CAMERA_INFO = "/slave/camera/camera_info"
 
     SYSTEM_STATUS = "/system/status"
 

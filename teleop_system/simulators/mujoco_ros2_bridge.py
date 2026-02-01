@@ -20,7 +20,7 @@ logger = get_logger("mujoco_ros2_bridge")
 try:
     import rclpy
     from rclpy.node import Node
-    from sensor_msgs.msg import JointState
+    from sensor_msgs.msg import JointState, Image, CameraInfo
     from geometry_msgs.msg import Twist
 
     _ROS2_AVAILABLE = True
@@ -49,6 +49,42 @@ if _ROS2_AVAILABLE:
     CTRL_RIGHT_GRIPPER = 24
     CTRL_LEFT_GRIPPER = 25
 
+    def _get_float_param(node, name: str) -> float:
+        """Get a ROS2 parameter as float, handling int/double/string types.
+
+        ROS2 LaunchConfiguration passes all values as strings. Depending on
+        the string content (e.g. "30" vs "30.0"), the parameter may be stored
+        as integer, double, or string. This helper normalizes to float.
+        """
+        pv = node.get_parameter(name).get_parameter_value()
+        if pv.type == 2:  # INTEGER
+            return float(pv.integer_value)
+        elif pv.type == 3:  # DOUBLE
+            return pv.double_value
+        elif pv.type == 4:  # STRING
+            return float(pv.string_value)
+        return pv.double_value
+
+    def _get_bool_param(node, name: str) -> bool:
+        """Get a ROS2 parameter as bool, handling string type from launch."""
+        pv = node.get_parameter(name).get_parameter_value()
+        if pv.type == 1:  # BOOL
+            return pv.bool_value
+        elif pv.type == 4:  # STRING
+            return pv.string_value.lower() in ("true", "1", "yes")
+        return pv.bool_value
+
+    def _get_int_param(node, name: str) -> int:
+        """Get a ROS2 parameter as int, handling string/double types from launch."""
+        pv = node.get_parameter(name).get_parameter_value()
+        if pv.type == 2:  # INTEGER
+            return pv.integer_value
+        elif pv.type == 3:  # DOUBLE
+            return int(pv.double_value)
+        elif pv.type == 4:  # STRING
+            return int(pv.string_value)
+        return pv.integer_value
+
     class MuJoCoROS2Bridge(Node):
         """ROS2 node that runs MuJoCo physics and bridges joint commands/states.
 
@@ -73,23 +109,36 @@ if _ROS2_AVAILABLE:
             self.declare_parameter("publish_rate_hz", 100.0)
             self.declare_parameter("viewer_rate_hz", 60.0)
             self.declare_parameter("launch_viewer", False)
+            self.declare_parameter("publish_camera", False)
+            self.declare_parameter("camera_fps", 15.0)
+            self.declare_parameter("camera_name", "head_camera")
+            self.declare_parameter("camera_width", 640)
+            self.declare_parameter("camera_height", 480)
 
             mjcf_path = self.get_parameter("mjcf_path").get_parameter_value().string_value
-            physics_rate = self.get_parameter("physics_rate_hz").get_parameter_value().double_value
-            publish_rate = self.get_parameter("publish_rate_hz").get_parameter_value().double_value
-            viewer_rate = self.get_parameter("viewer_rate_hz").get_parameter_value().double_value
-            launch_viewer = self.get_parameter("launch_viewer").get_parameter_value().bool_value
+            physics_rate = _get_float_param(self, "physics_rate_hz")
+            publish_rate = _get_float_param(self, "publish_rate_hz")
+            viewer_rate = _get_float_param(self, "viewer_rate_hz")
+            launch_viewer = _get_bool_param(self, "launch_viewer")
+            publish_camera = _get_bool_param(self, "publish_camera")
+            camera_fps = _get_float_param(self, "camera_fps")
+            self._camera_name = self.get_parameter("camera_name").get_parameter_value().string_value
+            camera_width = _get_int_param(self, "camera_width")
+            camera_height = _get_int_param(self, "camera_height")
 
             # ── Resolve model path relative to project root ──
             project_root = Path(__file__).resolve().parent.parent.parent
             full_path = str(project_root / mjcf_path)
 
             # ── Initialize MuJoCo Simulator ──
+            # Enable rendering when camera publishing is requested
             self._sim = MuJoCoSimulator()
             success = self._sim.initialize({
                 "mjcf_path": full_path,
                 "timestep": 0.002,
-                "render": False,
+                "render": publish_camera,
+                "render_width": camera_width,
+                "render_height": camera_height,
             })
             if not success:
                 self.get_logger().error(f"Failed to initialize MuJoCo from {full_path}")
@@ -163,6 +212,26 @@ if _ROS2_AVAILABLE:
                     1.0 / viewer_rate, self._sync_viewer
                 )
 
+            # ── Optional camera RGB-D publishers ──
+            self._publish_camera = publish_camera
+            if publish_camera:
+                self._camera_color_pub = self.create_publisher(
+                    Image, TopicNames.CAMERA_COLOR_IMAGE, sensor_qos
+                )
+                self._camera_depth_pub = self.create_publisher(
+                    Image, TopicNames.CAMERA_DEPTH_IMAGE, sensor_qos
+                )
+                self._camera_info_pub = self.create_publisher(
+                    CameraInfo, TopicNames.CAMERA_INFO, sensor_qos
+                )
+                self._camera_timer = self.create_timer(
+                    1.0 / camera_fps, self._publish_camera_frame
+                )
+                self.get_logger().info(
+                    f"Camera publishing enabled: {self._camera_name} "
+                    f"@ {camera_fps}Hz, {camera_width}x{camera_height}"
+                )
+
             self.get_logger().info("MuJoCoROS2Bridge ready")
 
         def _joint_cmd_callback(self, msg: JointState, ctrl_slice: slice) -> None:
@@ -209,6 +278,61 @@ if _ROS2_AVAILABLE:
             """Sync the passive viewer with simulation state."""
             self._sim.sync_viewer()
 
+        def _publish_camera_frame(self) -> None:
+            """Render head camera and publish RGB-D as ROS2 Image messages.
+
+            Runs on the main thread via rclpy timer (single-threaded executor),
+            which is the same thread that created the EGL rendering context.
+            """
+            frame = self._sim.get_camera_rgbd(self._camera_name)
+            stamp = self.get_clock().now().to_msg()
+
+            # RGB Image (rgb8 encoding)
+            rgb_msg = Image()
+            rgb_msg.header.stamp = stamp
+            rgb_msg.header.frame_id = self._camera_name
+            rgb_msg.height = frame.height
+            rgb_msg.width = frame.width
+            rgb_msg.encoding = "rgb8"
+            rgb_msg.is_bigendian = False
+            rgb_msg.step = frame.width * 3
+            rgb_msg.data = frame.rgb.tobytes()
+            self._camera_color_pub.publish(rgb_msg)
+
+            # Depth Image (32FC1 encoding, meters)
+            depth_msg = Image()
+            depth_msg.header.stamp = stamp
+            depth_msg.header.frame_id = self._camera_name
+            depth_msg.height = frame.height
+            depth_msg.width = frame.width
+            depth_msg.encoding = "32FC1"
+            depth_msg.is_bigendian = False
+            depth_msg.step = frame.width * 4
+            depth_msg.data = frame.depth.astype(np.float32).tobytes()
+            self._camera_depth_pub.publish(depth_msg)
+
+            # CameraInfo
+            info_msg = CameraInfo()
+            info_msg.header.stamp = stamp
+            info_msg.header.frame_id = self._camera_name
+            info_msg.height = frame.height
+            info_msg.width = frame.width
+            info_msg.distortion_model = "plumb_bob"
+            info_msg.d = [0.0, 0.0, 0.0, 0.0, 0.0]
+            K = frame.intrinsics
+            info_msg.k = [
+                K[0, 0], K[0, 1], K[0, 2],
+                K[1, 0], K[1, 1], K[1, 2],
+                K[2, 0], K[2, 1], K[2, 2],
+            ]
+            info_msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+            info_msg.p = [
+                K[0, 0], 0.0, K[0, 2], 0.0,
+                0.0, K[1, 1], K[1, 2], 0.0,
+                0.0, 0.0, 1.0, 0.0,
+            ]
+            self._camera_info_pub.publish(info_msg)
+
         def destroy_node(self):
             self._sim.shutdown()
             super().destroy_node()
@@ -217,17 +341,24 @@ if _ROS2_AVAILABLE:
 def main(args=None):
     """Entry point for the MuJoCo ROS2 bridge node.
 
-    Supports --launch-viewer flag from command line.
+    Supports --launch-viewer and --publish-camera flags from command line.
     """
     if not _ROS2_AVAILABLE:
         raise RuntimeError("ROS2 is not available. Install ros-jazzy-desktop.")
 
-    # Parse --launch-viewer flag before passing args to rclpy
+    # Parse CLI flags before passing args to rclpy
     argv = args if args is not None else sys.argv
     launch_viewer = "--launch-viewer" in argv
-    filtered_args = [a for a in argv if a != "--launch-viewer"]
+    publish_camera = "--publish-camera" in argv
+    filtered_args = [a for a in argv if a not in ("--launch-viewer", "--publish-camera")]
 
     rclpy.init(args=filtered_args)
+
+    # Pass publish_camera as an override parameter
+    overrides = []
+    if publish_camera:
+        from rclpy.parameter import Parameter
+        overrides.append(Parameter("publish_camera", Parameter.Type.BOOL, True))
 
     node = MuJoCoROS2Bridge()
 
@@ -236,6 +367,13 @@ def main(args=None):
         node._sim.launch_passive_viewer()
         node._viewer_timer = node.create_timer(1.0 / 60.0, node._sync_viewer)
         node.get_logger().info("Passive viewer launched via --launch-viewer flag")
+
+    # Override publish_camera if CLI flag was passed
+    if publish_camera and not node._publish_camera:
+        node.get_logger().warn(
+            "--publish-camera flag requires render support. "
+            "Set publish_camera:=true as a parameter instead."
+        )
 
     try:
         rclpy.spin(node)

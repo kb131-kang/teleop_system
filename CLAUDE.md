@@ -11,63 +11,105 @@ RB-Y1 humanoid robot VR teleoperation system. Maps 5 Vive Trackers + 2 Manus Glo
 ### Running tests
 
 ```bash
-# Full suite (system Python)
-python3 -m pytest tests/ -v
+python3 -m pytest tests/ -v                          # Full suite
+python3 -m pytest tests/test_phase3_multichain.py -v  # Single file
+python3 -m pytest tests/test_transforms.py::TestQuaternionOperations::test_multiply_identity -v  # Single test
 
-# Full suite (Isaac Sim Python — required for Isaac Lab integration)
+# Isaac Sim Python (for Isaac Lab integration)
 /workspace/isaaclab/_isaac_sim/python.sh -m pytest tests/ -v
-
-# Single test file
-python3 -m pytest tests/test_phase3_multichain.py -v
-
-# Single test
-python3 -m pytest tests/test_transforms.py::TestQuaternionOperations::test_multiply_identity -v
 ```
+
+Tests are organized by development phase: 1-2 need only numpy/scipy, phase 3+ requires `pin` and `pink`, phase 5+ needs `mujoco`. All 192 tests pass without ROS2 or hardware SDKs.
 
 ### Running the system
 
 ```bash
-# Simulation mode (default)
+# Full simulation (slave + master) — ROS2 launch
+ros2 launch teleop_system teleop_sim_full.launch.py
+ros2 launch teleop_system teleop_sim_full.launch.py launch_viewer:=true publish_camera:=true launch_camera_viewer:=true
+
+# Slave only / Master only
+ros2 launch teleop_system slave_mujoco.launch.py launch_viewer:=true publish_camera:=true launch_streaming:=true
+ros2 launch teleop_system master_sim.launch.py launch_viewer:=true
+
+# Python scripts (no ros2 launch needed)
+python3 scripts/launch_all.py --launch-viewer --publish-camera --launch-camera-viewer
+python3 scripts/launch_slave.py --launch-viewer --publish-camera --launch-streaming
+python3 scripts/launch_master.py --launch-viewer
+
+# Standalone (no ROS2)
 python3 scripts/run_teleop.py --mode simulation --sim-backend mujoco
+```
 
-# Hardware mode
-python3 scripts/run_teleop.py --mode hardware
+### Camera / RGB-D streaming
 
-# Selective modules
-python3 scripts/run_teleop.py --modules arm locomotion --no-gui
+```bash
+# Same-machine viewer (subscribes to ROS2 camera topics)
+python3 scripts/demo_rgbd_streaming.py --mode ros2-viewer
 
-# ROS2 launch files
-ros2 launch teleop_system teleop_sim.launch.py sim_backend:=mujoco
-ros2 launch teleop_system teleop_full.launch.py robot_ip:=192.168.0.100
-ros2 launch teleop_system arm_only.launch.py
-ros2 launch teleop_system hand_only.launch.py
+# Cross-machine: ROS2→TCP bridge on slave, TCP client on master
+python3 scripts/demo_rgbd_streaming.py --mode ros2-server --host 0.0.0.0 --port 9876
+python3 scripts/demo_rgbd_streaming.py --mode client --host <slave-ip> --port 9876 --ros2-sync
+
+# Standalone (own MuJoCo instance, no teleop sync)
+python3 scripts/demo_rgbd_streaming.py --mode server --host 0.0.0.0 --port 9999
 ```
 
 ## Architecture
 
 ### Interface-driven design (ABC pattern)
 
-All hardware-dependent components are abstract base classes in `teleop_system/interfaces/`. Concrete implementations exist for both real hardware (`devices/`) and simulation (`simulators/`). The key interfaces:
+All hardware-dependent components are abstract base classes in `teleop_system/interfaces/`. Concrete implementations exist for both real hardware (`devices/`) and simulation (`simulators/`):
 
 - **IMasterTracker** → ViveTracker, SimulatedTracker
 - **IHandInput** → ManusGlove, SimulatedHand
 - **ISlaveArm** → RBY1Arm
 - **ISlaveHand** → DG5FHand
 - **IMobileBase** → RBY1Base
-- **IIKSolver** → PinkIKSolver
+- **IIKSolver** → PinkIKSolver, ProportionalMapper
 - **ISimulator** → MuJoCoSimulator
-- **ICameraStream** → RealSenseCamera
+- **ICameraStream** → RealSenseCamera, SimCameraStream, ROS2RGBDSubscriber, RGBDStreamClient
 
-### Module independence
+### Module structure pattern
 
-Four independent modules, each a ROS2 Lifecycle Node communicating via topics:
+Each of the four teleop modules follows a three-file pattern:
+
+```
+modules/<name>/
+├── <name>_controller.py   # Pure Python logic — no ROS2 dep, independently testable
+├── <name>_node.py         # ROS2 Lifecycle Node wrapping the controller
+└── ros2_adapters.py       # ROS2 message ↔ interface type converters
+```
+
+Data flow (arm_teleop example):
+```
+DummyTrackerPub → PoseStamped → ArmTeleopNode → ArmController.update()
+  → PinkIKSolver.solve_multi() → JointState → MuJoCoROS2Bridge → mujoco.mj_step()
+```
+
+### Module topic mapping
 
 | Module | Input topics | Output topics |
 |--------|-------------|---------------|
-| arm_teleop | `/master/tracker/{left,right,waist}` | `/slave/arm/{left,right}/joint_cmd` |
+| arm_teleop | `/master/tracker/{left,right,waist}` | `/slave/arm/{left,right}/joint_cmd`, `/slave/torso/joint_cmd` |
 | locomotion | `/master/tracker/{left,right}_foot` | `/slave/base/cmd_vel` |
 | hand_teleop | `/master/hand/{left,right}/joints` | `/slave/hand/{left,right}/joint_cmd` |
-| camera | RealSense RGB-D topics | Point cloud data |
+| camera | `/master/hmd/orientation` | `/slave/camera/pan_tilt_cmd` |
+
+### MuJoCo actuator mapping (model_teleop.xml — 26 actuators)
+
+| ctrl index | Constant | Joints |
+|-----------|----------|--------|
+| 0 | `CTRL_LEFT_WHEEL` | Left wheel |
+| 1 | `CTRL_RIGHT_WHEEL` | Right wheel |
+| 2–7 | `CTRL_TORSO` | Torso (6 DOF) |
+| 8–14 | `CTRL_RIGHT_ARM` | Right arm (7 DOF) |
+| 15–21 | `CTRL_LEFT_ARM` | Left arm (7 DOF) |
+| 22–23 | `CTRL_HEAD` | Head pan, tilt |
+| 24 | `CTRL_RIGHT_GRIPPER` | Right gripper |
+| 25 | `CTRL_LEFT_GRIPPER` | Left gripper |
+
+These constants are defined in `teleop_system/simulators/mujoco_ros2_bridge.py`.
 
 ### Multi-chain IK solver
 
@@ -80,23 +122,43 @@ All frame transforms are centralized in `teleop_system/utils/transforms.py` (pur
 - **ROS2/URDF**: X-forward, Y-left, Z-up, quaternion as `(x, y, z, w)`
 - **SteamVR**: X-right, Y-up, Z-backward, quaternion as `(w, x, y, z)`
 
-No other module should perform frame conversions directly.
+No other module should perform frame conversions directly. `quat_to_euler`/`euler_to_quat` only support `"sxyz"` convention.
 
 ### Configuration
 
-YAML files in `config/` loaded via `utils/config_loader.py` (Hydra/OmegaConf). Structure:
+YAML files in `config/` loaded via `utils/config_loader.py` (Hydra/OmegaConf):
 - `default.yaml` — top-level system config
 - `teleop/{arm,hand,locomotion}.yaml` — per-module parameters
 - `hardware/{vive_tracker,manus_glove,rby1,dg5f}.yaml` — device configs
 - `simulation/{mujoco,isaac_lab}.yaml` — simulator configs
 
-### Hardware driver pattern
+### Camera streaming architecture
 
-All device drivers in `devices/` use `try/except ImportError` to gracefully handle missing SDKs. When the SDK is absent, the driver still instantiates but reports `is_connected() == False`. This allows the full test suite to run without any hardware SDK installed.
+Five modes in `scripts/demo_rgbd_streaming.py`:
+
+| Mode | Description | Use case |
+|------|-------------|----------|
+| `server` | Standalone MuJoCo → TCP | Quick test (no teleop sync) |
+| `client` | TCP viewer + optional `--ros2-sync` | Remote point cloud viewer |
+| `local` | server + client in one process | Localhost testing |
+| `ros2-viewer` | Subscribes to ROS2 camera topics | Same-machine viewing |
+| `ros2-server` | ROS2 camera topics → TCP bridge | **Cross-machine with teleop sync** |
+
+`ros2-server` is the production mode for cross-machine setups — it bridges the MuJoCo bridge's ROS2 camera topics to TCP, so there's only one MuJoCo instance and the camera reflects real robot motion. The standalone `server` mode creates its own MuJoCo instance that does **not** receive teleop commands.
 
 ## Key constraints
 
-- `transforms3d` is listed in setup.py but **not actually used at runtime** — `utils/transforms.py` implements all rotation math with pure numpy. Remove it from dependencies when cleaning up.
-- The `axes` parameter in `quat_to_euler`/`euler_to_quat` only supports `"sxyz"` convention.
-- ROS2 nodes use lazy imports (`rclpy` imported inside class methods) so non-ROS2 tests pass without a ROS2 installation.
-- Tests are organized by development phase (1-6). Phase 3+ tests require `pin` and `pink` packages.
+- `transforms3d` is listed in setup.py but **not used at runtime** — `utils/transforms.py` implements all rotation math with pure numpy.
+- ROS2 nodes and all device drivers use lazy imports (`try: import rclpy` + `_ROS2_AVAILABLE` flag, `try: import sdk` + `_SDK_AVAILABLE` flag). Missing SDKs don't break imports; devices report `is_connected() == False`. This allows the full test suite to run without ROS2 or hardware SDKs.
+- MuJoCo EGL rendering is thread-local. Camera capture must happen on the main thread (bridge uses single-threaded executor; streaming server uses `capture()` pattern on main thread).
+- ROS2 `LaunchConfiguration` passes all values as strings. `mujoco_ros2_bridge.py` has `_get_float_param()`, `_get_bool_param()`, `_get_int_param()` helpers for type coercion. Use these when reading parameters from launch files.
+- Topic names are centralized in `utils/ros2_helpers.py` `TopicNames` class — use constants, not hardcoded strings. QoS profiles are in `QoSPreset` enum: `SENSOR_DATA` (best effort, depth=1), `COMMAND` (reliable, depth=1), `STATUS` (transient local, depth=10).
+
+## Documentation
+
+- `docs/user_guide.md` — End-user guide (installation, running modes, camera streaming, troubleshooting)
+- `docs/developer_guide.md` — Architecture, interfaces, adding modules, MuJoCo integration
+- `docs/develop_summary.md` — **Ongoing development log** (update after each session)
+- `docs/PRD.md` — Product Requirements Document
+- `docs/TRD.md` — Technical Requirements Document
+- `docs/Tasks.md` — Task tracking

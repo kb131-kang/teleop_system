@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import setup, find_packages
 
 package_name = "teleop_system"
@@ -6,6 +8,15 @@ setup(
     name=package_name,
     version="0.1.0",
     packages=find_packages(exclude=["tests"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+        ("share/" + package_name + "/config", glob("config/*.yaml")),
+        ("share/" + package_name + "/config/teleop", glob("config/teleop/*.yaml")),
+        ("share/" + package_name + "/config/hardware", glob("config/hardware/*.yaml")),
+        ("share/" + package_name + "/config/simulation", glob("config/simulation/*.yaml")),
+    ],
     install_requires=[
         "numpy>=1.26.0",
         "scipy>=1.12.0",

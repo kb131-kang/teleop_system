@@ -30,6 +30,10 @@ def generate_launch_description():
             description="Launch MuJoCo passive viewer",
         ),
         DeclareLaunchArgument(
+            "publish_camera", default_value="false",
+            description="Publish RGB-D from MuJoCo head camera as ROS2 topics",
+        ),
+        DeclareLaunchArgument(
             "tracker_amplitude", default_value="0.08",
             description="Dummy tracker oscillation amplitude (meters)",
         ),
@@ -50,6 +54,11 @@ def generate_launch_description():
                 "publish_rate_hz": 100.0,
                 "viewer_rate_hz": 60.0,
                 "launch_viewer": LaunchConfiguration("launch_viewer"),
+                "publish_camera": LaunchConfiguration("publish_camera"),
+                "camera_fps": 15.0,
+                "camera_name": "head_camera",
+                "camera_width": 640,
+                "camera_height": 480,
             }],
         ),
 

@@ -1,28 +1,43 @@
 #!/usr/bin/env python3
-"""RGB-D streaming demo: server, client, or local (both-in-one).
+"""RGB-D streaming demo: server, client, local, ros2-viewer, or ros2-server.
 
 Demonstrates compressed RGB-D streaming over TCP between a slave (robot
-with camera) and master (operator with viewer).
+with camera) and master (operator with viewer), or via ROS2 topics.
 
 Modes:
-  server  — MuJoCo simulation + StreamServer (runs on robot side)
-  client  — StreamClient + PointCloudViewer (runs on operator side)
-  local   — Both server and client in one process (testing/development)
+  server      — Standalone MuJoCo simulation + StreamServer (single-machine testing)
+  client      — StreamClient + PointCloudViewer (runs on operator side)
+  local       — Both server and client in one process (testing/development)
+  ros2-viewer — Subscribe to ROS2 RGB-D topics + PointCloudViewer (same machine)
+  ros2-server — Bridge ROS2 camera topics to TCP streaming (cross-machine)
 
-Usage:
-    # Terminal 1 (robot): start server with MuJoCo simulation
+For cross-machine streaming with full robot sync, use ros2-server + client:
+
+    # Slave machine: MuJoCo bridge + ros2-server
+    ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true
+    python3 scripts/demo_rgbd_streaming.py --mode ros2-server --host 0.0.0.0
+
+    # Master machine: client viewer
+    python3 scripts/demo_rgbd_streaming.py --mode client --host <slave-ip>
+
+For same-machine viewing:
+
+    # MuJoCo bridge with camera
+    ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true
+
+    # Viewer subscribing directly to ROS2 topics
+    python3 scripts/demo_rgbd_streaming.py --mode ros2-viewer
+
+Other modes:
+
+    # Standalone server (own MuJoCo, no master sync):
     MUJOCO_GL=egl python3 scripts/demo_rgbd_streaming.py --mode server
-
-    # Terminal 2 (operator): connect and view point cloud
-    python3 scripts/demo_rgbd_streaming.py --mode client --host localhost
 
     # Single process (development):
     python3 scripts/demo_rgbd_streaming.py --mode local
 
-Controls (in client/local mode):
+Controls (in client/local/ros2-viewer mode):
     Left-drag:   Rotate view + robot camera
-    Right-drag:  Pan view
-    Scroll:      Zoom in/out
     R:           Reset view
     Q/ESC:       Quit
 """
@@ -30,6 +45,7 @@ Controls (in client/local mode):
 import argparse
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -178,29 +194,38 @@ def run_client(args):
         use_open3d=True,
     )
 
-    # Viewer with camera sync (drives robot camera via reverse channel)
+    # Viewer in first-person mode: shows camera-frame point cloud
+    # (like looking through the robot's eyes)
     viewer = PointCloudViewer(
         width=960,
         height=720,
-        title="RGB-D Stream Viewer",
+        title="RGB-D Stream Viewer (First-Person)",
         point_size=args.point_size,
-        camera=client,  # mouse orbit drives robot camera
+        camera=client,  # mouse drag drives robot camera pan/tilt
+        first_person=True,
     )
     if not viewer.initialize():
         print("  [ERROR] Failed to initialize viewer")
         client.shutdown()
         return 1
 
-    # Set initial camera view
-    viewer._cam_distance = 8.0
-    viewer._cam_yaw = 180.0
-    viewer._cam_pitch = -20.0
-    viewer.set_camera(client)  # update reference point
+    viewer.set_camera(client)
 
-    print(f"  Viewer: mouse orbit drives robot camera (pan/tilt)")
+    # Optional ROS2 head orientation sync
+    head_sync = None
+    if args.ros2_sync:
+        from teleop_system.modules.camera.ros2_head_sync import ROS2HeadSync
+
+        head_sync = ROS2HeadSync(camera=client)
+        if head_sync.start():
+            print("  ROS2 head sync: ENABLED (/mujoco/joint_states -> TCP)")
+        else:
+            print("  ROS2 head sync: FAILED (falling back to mouse-only)")
+            head_sync = None
+
+    print(f"  Viewer: first-person (robot camera POV)")
     print(f"  Point cloud: voxel={args.voxel_size}m, max_depth={args.max_depth}m")
-    print(f"\n  Controls: Left-drag=Rotate+Robot, Right-drag=Pan, "
-          f"Scroll=Zoom, R=Reset, Q=Quit")
+    print(f"\n  Controls: Left-drag=Move robot camera, R=Reset, Q=Quit")
     print("=" * 70 + "\n")
 
     dt_capture = 1.0 / args.stream_fps
@@ -214,6 +239,9 @@ def run_client(args):
             if now - last_capture >= dt_capture:
                 frame = client.get_rgbd()
                 if frame.rgb.any():
+                    # Keep points in camera frame (don't transform to world).
+                    # The first-person viewer displays camera-frame points directly.
+                    frame.extrinsics = np.eye(4)
                     pc = pcg.generate(frame)
                     capture_count += 1
 
@@ -239,6 +267,8 @@ def run_client(args):
     print(f"\n  Frames received: {client.frames_received}")
     print(f"  Data received: {client.bytes_received / 1e6:.1f} MB")
 
+    if head_sync:
+        head_sync.stop()
     viewer.shutdown()
     client.shutdown()
     print("  Done.")
@@ -310,13 +340,14 @@ def run_local(args):
         use_open3d=True,
     )
 
-    # Viewer with camera sync
+    # Viewer in first-person mode (robot camera POV)
     viewer = PointCloudViewer(
         width=960,
         height=720,
-        title="RGB-D Stream (Local)",
+        title="RGB-D Stream (Local, First-Person)",
         point_size=args.point_size,
         camera=client,
+        first_person=True,
     )
     if not viewer.initialize():
         print("  [ERROR] Failed to initialize viewer")
@@ -325,9 +356,6 @@ def run_local(args):
         sim.shutdown()
         return 1
 
-    viewer._cam_distance = 8.0
-    viewer._cam_yaw = 180.0
-    viewer._cam_pitch = -20.0
     viewer.set_camera(client)
 
     # Estimate compression
@@ -342,8 +370,7 @@ def run_local(args):
     print(f"  Compression: {raw_size/1e3:.0f} KB -> {compressed_size/1e3:.0f} KB "
           f"({raw_size/compressed_size:.1f}x)")
     print(f"  Bandwidth: ~{compressed_size * args.stream_fps / 1e6:.2f} MB/s")
-    print(f"\n  Controls: Left-drag=Rotate+Robot, Right-drag=Pan, "
-          f"Scroll=Zoom, R=Reset, Q=Quit")
+    print(f"\n  Controls: Left-drag=Move robot camera, R=Reset, Q=Quit")
     print("=" * 70 + "\n")
 
     dt_physics = 1.0 / 60.0
@@ -367,6 +394,8 @@ def run_local(args):
 
                 frame = client.get_rgbd()
                 if frame.rgb.any():
+                    # Keep points in camera frame for first-person view
+                    frame.extrinsics = np.eye(4)
                     pc = pcg.generate(frame)
                     capture_count += 1
 
@@ -402,13 +431,232 @@ def run_local(args):
     return 0
 
 
+def _ros2_spin_loop(node):
+    """Background ROS2 spin loop."""
+    import rclpy
+
+    while rclpy.ok():
+        rclpy.spin_once(node, timeout_sec=0.1)
+
+
+def run_ros2_viewer(args):
+    """Run viewer subscribing to ROS2 RGB-D topics."""
+    import rclpy
+
+    from teleop_system.modules.camera.pointcloud_generator import PointCloudGenerator
+    from teleop_system.modules.camera.pointcloud_viewer import PointCloudViewer
+    from teleop_system.modules.camera.ros2_rgbd_subscriber import ROS2RGBDSubscriber
+
+    print("\n" + "=" * 70)
+    print("  RGB-D ROS2 VIEWER")
+    print("=" * 70)
+
+    try:
+        if not rclpy.ok():
+            rclpy.init()
+    except RuntimeError:
+        rclpy.init()
+
+    # Create ROS2 RGB-D subscriber (ICameraStream)
+    subscriber = ROS2RGBDSubscriber(
+        color_topic=args.color_topic or "/slave/camera/color/image_raw",
+        depth_topic=args.depth_topic or "/slave/camera/depth/image_raw",
+        info_topic=args.info_topic or "/slave/camera/camera_info",
+        joint_states_topic="/mujoco/joint_states",
+        pan_tilt_topic="/slave/camera/pan_tilt_cmd",
+    )
+    if not subscriber.initialize():
+        print("  [ERROR] Failed to initialize ROS2 RGB-D subscriber")
+        rclpy.shutdown()
+        return 1
+
+    print(f"  Subscribing to ROS2 topics:")
+    print(f"    Color: {args.color_topic or '/slave/camera/color/image_raw'}")
+    print(f"    Depth: {args.depth_topic or '/slave/camera/depth/image_raw'}")
+    print(f"    Info:  {args.info_topic or '/slave/camera/camera_info'}")
+    print(f"    Head:  /mujoco/joint_states")
+
+    # Point cloud generator
+    pcg = PointCloudGenerator(
+        voxel_size=args.voxel_size,
+        max_depth=args.max_depth,
+        min_depth=0.1,
+        use_open3d=True,
+    )
+
+    # Viewer in first-person mode with camera sync
+    viewer = PointCloudViewer(
+        width=960,
+        height=720,
+        title="ROS2 RGB-D Viewer (First-Person)",
+        point_size=args.point_size,
+        camera=subscriber,
+        first_person=True,
+    )
+    if not viewer.initialize():
+        print("  [ERROR] Failed to initialize viewer")
+        subscriber.shutdown()
+        rclpy.shutdown()
+        return 1
+
+    viewer.set_camera(subscriber)
+
+    # Spin ROS2 in background thread
+    spin_thread = threading.Thread(
+        target=_ros2_spin_loop, args=(subscriber._node,),
+        daemon=True, name="ros2-viewer-spin",
+    )
+    spin_thread.start()
+
+    print(f"  Point cloud: voxel={args.voxel_size}m, max_depth={args.max_depth}m")
+    print(f"\n  Controls: Left-drag=Move robot camera, R=Reset, Q=Quit")
+    print(f"  Waiting for data... (Ctrl+C to stop)")
+    print("=" * 70 + "\n")
+
+    dt_capture = 1.0 / args.stream_fps
+    last_capture = 0.0
+    capture_count = 0
+
+    try:
+        while viewer.is_running():
+            now = time.monotonic()
+
+            if now - last_capture >= dt_capture:
+                frame = subscriber.get_rgbd()
+                if frame.rgb is not None and frame.rgb.any():
+                    frame.extrinsics = np.eye(4)
+                    pc = pcg.generate(frame)
+                    capture_count += 1
+
+                    if pc["count"] > 0:
+                        viewer.update_points(pc["points"], pc["colors"])
+
+                    pan, tilt = subscriber.get_orientation()
+                    viewer.set_stats(
+                        f"pan={pan:.2f} tilt={tilt:.2f}  "
+                        f"frames={capture_count}"
+                    )
+                last_capture = now
+
+            viewer.render()
+            time.sleep(0.001)
+
+    except KeyboardInterrupt:
+        print("\n  Stopped by user")
+
+    print(f"\n  Frames displayed: {capture_count}")
+
+    viewer.shutdown()
+    subscriber.shutdown()
+    rclpy.shutdown()
+    print("  Done.")
+    return 0
+
+
+def run_ros2_server(args):
+    """Run a TCP streaming server that reads from ROS2 camera topics.
+
+    Unlike ``run_server()`` which creates its own MuJoCo simulation, this mode
+    subscribes to the MuJoCo bridge's ROS2 camera topics and forwards frames
+    over TCP to remote clients.  This keeps a single MuJoCo instance (the
+    bridge) as the authoritative simulation, so the robot body/head movement
+    from the master system is correctly reflected in the streamed images.
+
+    When a client sends orientation via the TCP reverse channel, the server
+    publishes it to ``/slave/camera/pan_tilt_cmd`` so the bridge moves the
+    head joints, which in turn produces updated camera images.
+    """
+    import rclpy
+
+    from teleop_system.modules.camera.ros2_rgbd_subscriber import ROS2RGBDSubscriber
+
+    print("\n" + "=" * 70)
+    print("  RGB-D ROS2 → TCP STREAM SERVER")
+    print("=" * 70)
+
+    try:
+        if not rclpy.ok():
+            rclpy.init()
+    except RuntimeError:
+        rclpy.init()
+
+    # ROS2 subscriber acts as ICameraStream — receives images from the bridge
+    subscriber = ROS2RGBDSubscriber(
+        color_topic=args.color_topic or "/slave/camera/color/image_raw",
+        depth_topic=args.depth_topic or "/slave/camera/depth/image_raw",
+        info_topic=args.info_topic or "/slave/camera/camera_info",
+        joint_states_topic="/mujoco/joint_states",
+        pan_tilt_topic="/slave/camera/pan_tilt_cmd",
+    )
+    if not subscriber.initialize():
+        print("  [ERROR] Failed to initialize ROS2 RGB-D subscriber")
+        rclpy.shutdown()
+        return 1
+
+    # TCP streaming server — uses the subscriber as its camera source
+    server = RGBDStreamServer(
+        camera=subscriber,
+        host=args.host,
+        port=args.port,
+        fps=args.stream_fps,
+        jpeg_quality=args.jpeg_quality,
+    )
+    server.start()
+
+    # Spin ROS2 in background thread so subscriptions receive data
+    spin_thread = threading.Thread(
+        target=_ros2_spin_loop, args=(subscriber._node,),
+        daemon=True, name="ros2-server-spin",
+    )
+    spin_thread.start()
+
+    print(f"  Subscribing to ROS2 camera topics:")
+    print(f"    Color: {args.color_topic or '/slave/camera/color/image_raw'}")
+    print(f"    Depth: {args.depth_topic or '/slave/camera/depth/image_raw'}")
+    print(f"    Info:  {args.info_topic or '/slave/camera/camera_info'}")
+    print(f"  TCP streaming on {args.host}:{args.port} @ {args.stream_fps} Hz")
+    print(f"  JPEG quality: {args.jpeg_quality}")
+    print(f"  Client pan/tilt → /slave/camera/pan_tilt_cmd (head control)")
+    print(f"\n  Waiting for client... (Ctrl+C to stop)")
+    print("=" * 70 + "\n")
+
+    dt_capture = 1.0 / args.stream_fps
+    last_capture = 0.0
+
+    try:
+        while server.is_running:
+            now = time.monotonic()
+
+            if now - last_capture >= dt_capture:
+                # Only capture when we have data from ROS2
+                if subscriber.is_connected():
+                    server.capture()
+                last_capture = now
+
+            time.sleep(0.001)
+
+            # Print periodic stats
+            if server.frames_sent > 0 and server.frames_sent % 100 == 0:
+                mb = server.bytes_sent / 1e6
+                print(f"  Sent {server.frames_sent} frames, {mb:.1f} MB")
+    except KeyboardInterrupt:
+        print("\n  Stopping server...")
+
+    server.stop()
+    subscriber.shutdown()
+    rclpy.shutdown()
+    print("  Done.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="RGB-D streaming demo (server/client/local)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--mode", choices=["server", "client", "local"],
+    parser.add_argument("--mode",
+                        choices=["server", "client", "local", "ros2-viewer", "ros2-server"],
                         default="local", help="Run mode (default: local)")
     parser.add_argument("--host", type=str, default="0.0.0.0",
                         help="Server bind/connect address")
@@ -428,12 +676,25 @@ def main():
                         help="Max depth for point cloud (meters)")
     parser.add_argument("--point-size", type=float, default=2.0,
                         help="OpenGL point size")
+    parser.add_argument("--ros2-sync", action="store_true",
+                        help="Enable ROS2 head sync in client mode "
+                             "(forwards /mujoco/joint_states head orientation to server)")
+    parser.add_argument("--color-topic", type=str, default=None,
+                        help="ROS2 color image topic (ros2-viewer/ros2-server mode)")
+    parser.add_argument("--depth-topic", type=str, default=None,
+                        help="ROS2 depth image topic (ros2-viewer/ros2-server mode)")
+    parser.add_argument("--info-topic", type=str, default=None,
+                        help="ROS2 camera info topic (ros2-viewer/ros2-server mode)")
     args = parser.parse_args()
 
     if args.mode == "server":
         return run_server(args)
     elif args.mode == "client":
         return run_client(args)
+    elif args.mode == "ros2-viewer":
+        return run_ros2_viewer(args)
+    elif args.mode == "ros2-server":
+        return run_ros2_server(args)
     else:
         return run_local(args)
 

@@ -56,7 +56,7 @@ if _ROS2_AVAILABLE:
             # ── Parameters ──
             self.declare_parameter("rate_hz", 30.0)
             self.declare_parameter("smoothing_alpha", 0.3)
-            self.declare_parameter("max_angular_velocity", 2.0)
+            self.declare_parameter("max_angular_velocity", 200.0)
 
             rate = self.get_parameter("rate_hz").get_parameter_value().double_value
             smoothing = self.get_parameter("smoothing_alpha").get_parameter_value().double_value
