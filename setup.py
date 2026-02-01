@@ -6,7 +6,7 @@ package_name = "teleop_system"
 
 setup(
     name=package_name,
-    version="0.1.0",
+    version="0.2.0",
     packages=find_packages(exclude=["tests"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -25,7 +25,6 @@ setup(
         "pyyaml>=6.0",
         "hydra-core>=1.3.0",
         "omegaconf>=2.3.0",
-        "transforms3d>=0.4.1",
     ],
     extras_require={
         "sim": ["mujoco>=3.4.0"],

@@ -43,6 +43,7 @@ class ModuleStatus:
     enabled: bool = False
     error_msg: str = ""
     metrics: dict[str, float] = field(default_factory=dict)
+    last_activity: float = 0.0  # monotonic timestamp of last message
 
 
 @dataclass
@@ -54,6 +55,15 @@ class TrackerData:
     calibration_progress: float = 0.0
     calibration_countdown: float = 0.0
     calibration_error: str = ""
+
+
+@dataclass
+class HandData:
+    """Buffer for hand/glove joint data."""
+    left_joints: np.ndarray | None = None   # 20-DOF finger joints
+    right_joints: np.ndarray | None = None  # 20-DOF finger joints
+    left_cmd: np.ndarray | None = None      # commanded hand positions
+    right_cmd: np.ndarray | None = None     # commanded hand positions
 
 
 @dataclass
@@ -91,11 +101,11 @@ PARAMETER_DEFS = [
 def _detect_display_scale() -> float:
     """Auto-detect display scale factor from screen resolution.
 
-    Returns a font/UI scale factor:
-        >= 3840px wide (4K)   → 2.0
-        >= 2560px wide (1440p) → 1.5
-        >= 1920px wide (1080p) → 1.2
-        otherwise              → 1.0
+    Returns a font/UI scale factor (minimum 2.0 for readability):
+        >= 3840px wide (4K)   → 3.0
+        >= 2560px wide (1440p) → 2.5
+        >= 1920px wide (1080p) → 2.0
+        otherwise              → 2.0
     """
     try:
         import subprocess as _sp
@@ -108,16 +118,14 @@ def _detect_display_scale() -> float:
                 res = line.split()[0]  # e.g. "3840x2160"
                 w = int(res.split("x")[0])
                 if w >= 3840:
-                    return 2.0
+                    return 3.0
                 elif w >= 2560:
-                    return 1.5
-                elif w >= 1920:
-                    return 1.2
+                    return 2.5
                 else:
-                    return 1.0
+                    return 2.0
     except Exception:
         pass
-    return 1.2  # safe default when detection fails
+    return 2.0  # minimum scale for readability
 
 
 class ControlPanel:
@@ -129,16 +137,16 @@ class ControlPanel:
     def __init__(
         self,
         title: str = "RB-Y1 Teleoperation Control Panel",
-        width: int = 1000,
-        height: int = 700,
+        width: int = 1800,
+        height: int = 1000,
         font_scale: float | None = None,
     ):
         self._title = title
         self._font_scale = font_scale  # None = auto-detect
-        # Detect scale for window sizing
+        # Detect scale for window sizing (minimum 2.0x)
         scale = font_scale or _detect_display_scale()
-        self._width = max(width, int(1000 * scale))
-        self._height = max(height, int(700 * scale))
+        self._width = max(width, int(1800 * (scale / 2.0)))
+        self._height = max(height, int(1000 * (scale / 2.0)))
         self._running = False
 
         # Thread-safe shared data
@@ -146,6 +154,7 @@ class ControlPanel:
         self._modules: dict[str, ModuleStatus] = {}
         self._tracker_data = TrackerData()
         self._joint_data = JointStateData()
+        self._hand_data = HandData()
 
         # Parameters
         self._parameters: dict[str, float] = {
@@ -162,6 +171,7 @@ class ControlPanel:
 
         # Internal state
         self._recording = False
+        self._estop_active = False
         self._playback_state = "UNKNOWN"  # READY, PLAYING, or UNKNOWN
         self._viewer_process: subprocess.Popen | None = None
         self._tcp_viewer_process: subprocess.Popen | None = None
@@ -184,6 +194,16 @@ class ControlPanel:
     def joint_data(self) -> JointStateData:
         """Direct access to joint state buffer (use lock!)."""
         return self._joint_data
+
+    @property
+    def hand_data(self) -> HandData:
+        """Direct access to hand data buffer (use lock!)."""
+        return self._hand_data
+
+    @property
+    def estop_active(self) -> bool:
+        """Whether emergency stop is currently active."""
+        return self._estop_active
 
     # ------------------------------------------------------------------
     # Module registration
@@ -244,6 +264,7 @@ class ControlPanel:
             with dpg.tab_bar(tag="main_tabs"):
                 self._build_status_tab()
                 self._build_tracker_tab()
+                self._build_hand_tab()
                 self._build_joint_states_tab()
                 self._build_parameters_tab()
 
@@ -281,9 +302,9 @@ class ControlPanel:
                         "●", tag=f"status_{name}", color=(128, 128, 128),
                     )
                     dpg.add_text(f" {name}", tag=f"label_{name}")
-                    dpg.add_checkbox(
-                        label="Enable", tag=f"toggle_{name}",
-                        callback=self._module_toggle_cb, user_data=name,
+                    dpg.add_text(
+                        " (no data)", tag=f"activity_{name}",
+                        color=(128, 128, 128),
                     )
 
             dpg.add_spacer(height=8)
@@ -316,28 +337,59 @@ class ControlPanel:
                 dpg.add_button(
                     label="Start Playback", tag="btn_start_playback",
                     callback=self._start_playback_cb,
-                    width=130,
+                    width=150,
                 )
                 dpg.add_button(
                     label="Calibrate (A-Pose)", tag="btn_calibrate",
                     callback=self._calibrate_cb,
-                    width=150,
+                    width=170,
                 )
                 dpg.add_button(
                     label="Viewer (ROS2)", tag="btn_rgbd_viewer",
                     callback=self._launch_viewer_cb,
-                    width=120,
-                )
-                dpg.add_button(
-                    label="EMERGENCY STOP", tag="btn_estop",
-                    callback=self._estop_cb,
-                    width=150,
+                    width=140,
                 )
                 dpg.add_button(
                     label="Record: OFF", tag="btn_record",
                     callback=self._record_cb,
-                    width=120,
+                    width=140,
                 )
+
+            dpg.add_spacer(height=5)
+
+            # Emergency Stop — large, prominent, toggleable
+            with dpg.theme(tag="estop_theme_inactive"):
+                with dpg.theme_component(dpg.mvButton):
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_Button, (180, 30, 30),
+                    )
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_ButtonHovered, (220, 50, 50),
+                    )
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_Text, (255, 255, 255),
+                    )
+            with dpg.theme(tag="estop_theme_active"):
+                with dpg.theme_component(dpg.mvButton):
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_Button, (255, 0, 0),
+                    )
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_ButtonHovered, (255, 60, 60),
+                    )
+                    dpg.add_theme_color(
+                        dpg.mvThemeCol_Text, (255, 255, 0),
+                    )
+
+            dpg.add_button(
+                label="[ EMERGENCY STOP ]", tag="btn_estop",
+                callback=self._estop_cb,
+                width=-1, height=50,
+            )
+            dpg.bind_item_theme("btn_estop", "estop_theme_inactive")
+            dpg.add_text(
+                "", tag="estop_status_text", color=(255, 80, 80),
+            )
 
             # TCP Viewer row
             with dpg.group(horizontal=True):
@@ -375,7 +427,7 @@ class ControlPanel:
     def _build_tracker_tab(self) -> None:
         with dpg.tab(label="Tracker View", tag="tab_tracker"):
             dpg.add_text(
-                "Tracker Positions (live)", color=(200, 200, 255),
+                "Tracker Positions — 3-View (live)", color=(200, 200, 255),
             )
             dpg.add_separator()
 
@@ -383,25 +435,26 @@ class ControlPanel:
             with dpg.group(horizontal=True):
                 for name, color in TRACKER_COLORS.items():
                     dpg.add_text(f"● {name}", color=color[:3])
-                    dpg.add_spacer(width=10)
+                    dpg.add_spacer(width=15)
 
             dpg.add_spacer(height=5)
 
-            # Two plots side by side: Top-down (XY) and Side (XZ)
+            # Three plots: Top-down (X-Y), Side (X-Z), Front (Y-Z)
+            plot_w, plot_h = 520, 420
             with dpg.group(horizontal=True):
                 # Top-down view (X-Y)
                 with dpg.plot(
                     label="Top-Down (X-Y)", tag="plot_tracker_xy",
-                    width=450, height=400,
+                    width=plot_w, height=plot_h,
                 ):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(
-                        dpg.mvXAxis, label="X (m)",
+                        dpg.mvXAxis, label="X forward (m)",
                         tag="tracker_xy_x",
                     )
                     dpg.set_axis_limits("tracker_xy_x", -1.0, 1.0)
                     dpg.add_plot_axis(
-                        dpg.mvYAxis, label="Y (m)",
+                        dpg.mvYAxis, label="Y left (m)",
                         tag="tracker_xy_y",
                     )
                     dpg.set_axis_limits("tracker_xy_y", -1.0, 1.0)
@@ -417,16 +470,16 @@ class ControlPanel:
                 # Side view (X-Z)
                 with dpg.plot(
                     label="Side (X-Z)", tag="plot_tracker_xz",
-                    width=450, height=400,
+                    width=plot_w, height=plot_h,
                 ):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(
-                        dpg.mvXAxis, label="X (m)",
+                        dpg.mvXAxis, label="X forward (m)",
                         tag="tracker_xz_x",
                     )
                     dpg.set_axis_limits("tracker_xz_x", -1.0, 1.0)
                     dpg.add_plot_axis(
-                        dpg.mvYAxis, label="Z (m)",
+                        dpg.mvYAxis, label="Z up (m)",
                         tag="tracker_xz_y",
                     )
                     dpg.set_axis_limits("tracker_xz_y", -0.5, 2.0)
@@ -438,6 +491,97 @@ class ControlPanel:
                             tag=f"series_xz_{name}",
                             parent="tracker_xz_y",
                         )
+
+                # Front view (Y-Z)
+                with dpg.plot(
+                    label="Front (Y-Z)", tag="plot_tracker_yz",
+                    width=plot_w, height=plot_h,
+                ):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(
+                        dpg.mvXAxis, label="Y left (m)",
+                        tag="tracker_yz_x",
+                    )
+                    dpg.set_axis_limits("tracker_yz_x", -1.0, 1.0)
+                    dpg.add_plot_axis(
+                        dpg.mvYAxis, label="Z up (m)",
+                        tag="tracker_yz_y",
+                    )
+                    dpg.set_axis_limits("tracker_yz_y", -0.5, 2.0)
+
+                    for name, color in TRACKER_COLORS.items():
+                        dpg.add_scatter_series(
+                            [0.0], [0.0],
+                            label=name,
+                            tag=f"series_yz_{name}",
+                            parent="tracker_yz_y",
+                        )
+
+    def _build_hand_tab(self) -> None:
+        """Hand/glove joint visualization tab."""
+        with dpg.tab(label="Hand Data", tag="tab_hand"):
+            dpg.add_text(
+                "Hand / Glove Joint Data (live)", color=(200, 200, 255),
+            )
+            dpg.add_separator()
+
+            with dpg.group(horizontal=True):
+                # Left hand bar chart
+                with dpg.plot(
+                    label="Left Hand (input)", tag="plot_hand_left",
+                    width=750, height=350,
+                ):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(
+                        dpg.mvXAxis, label="Joint",
+                        tag="hand_left_x",
+                    )
+                    dpg.add_plot_axis(
+                        dpg.mvYAxis, label="Angle (rad)",
+                        tag="hand_left_y",
+                    )
+                    dpg.set_axis_limits("hand_left_y", -0.1, 2.0)
+
+                    dpg.add_bar_series(
+                        list(range(20)), [0.0] * 20,
+                        label="joint angles",
+                        tag="series_hand_left",
+                        parent="hand_left_y",
+                        weight=0.6,
+                    )
+
+                # Right hand bar chart
+                with dpg.plot(
+                    label="Right Hand (input)", tag="plot_hand_right",
+                    width=750, height=350,
+                ):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(
+                        dpg.mvXAxis, label="Joint",
+                        tag="hand_right_x",
+                    )
+                    dpg.add_plot_axis(
+                        dpg.mvYAxis, label="Angle (rad)",
+                        tag="hand_right_y",
+                    )
+                    dpg.set_axis_limits("hand_right_y", -0.1, 2.0)
+
+                    dpg.add_bar_series(
+                        list(range(20)), [0.0] * 20,
+                        label="joint angles",
+                        tag="series_hand_right",
+                        parent="hand_right_y",
+                        weight=0.6,
+                    )
+
+            # Status text
+            dpg.add_spacer(height=5)
+            dpg.add_text(
+                "Waiting for hand data... "
+                "(Hand publisher must be running: dummy_glove_pub or BVH replay)",
+                tag="hand_status_text",
+                color=(180, 180, 100),
+            )
 
     def _build_joint_states_tab(self) -> None:
         with dpg.tab(label="Joint States", tag="tab_joints"):
@@ -511,6 +655,14 @@ class ControlPanel:
                         parent="torso_y",
                     )
 
+            dpg.add_spacer(height=5)
+            dpg.add_text(
+                "Waiting for joint data... "
+                "(Arm teleop + slave MuJoCo bridge must be running)",
+                tag="joint_status_text",
+                color=(180, 180, 100),
+            )
+
     def _build_parameters_tab(self) -> None:
         with dpg.tab(label="Parameters", tag="tab_params"):
             dpg.add_text("Teleop Parameters", color=(200, 200, 255))
@@ -549,21 +701,42 @@ class ControlPanel:
         with self._lock:
             self._update_status_tab()
             self._update_tracker_tab()
+            self._update_hand_tab()
             self._update_joint_states_tab()
 
         dpg.render_dearpygui_frame()
         return True
 
     def _update_status_tab(self) -> None:
-        # Module status indicators
+        import time as _time
+        now = _time.monotonic()
+
+        # Module status indicators — auto-detect from activity
         for name, status in self._modules.items():
-            if status.connected and status.enabled:
+            age = now - status.last_activity if status.last_activity > 0 else float("inf")
+            if age < 2.0:
+                # Active: received data within last 2 seconds
                 color = (0, 255, 0)
-            elif status.connected:
+                activity_text = f" (active, {age:.1f}s ago)"
+                activity_color = (0, 255, 0)
+            elif age < 10.0:
+                # Stale: had data but not recently
                 color = (255, 255, 0)
+                activity_text = f" (stale, {age:.0f}s ago)"
+                activity_color = (255, 255, 0)
+            elif status.last_activity > 0:
+                # Disconnected: used to have data
+                color = (255, 100, 0)
+                activity_text = f" (no data for {age:.0f}s)"
+                activity_color = (255, 100, 0)
             else:
-                color = (255, 0, 0)
+                # Never received any data
+                color = (128, 128, 128)
+                activity_text = " (no data)"
+                activity_color = (128, 128, 128)
             dpg.configure_item(f"status_{name}", color=color)
+            dpg.set_value(f"activity_{name}", activity_text)
+            dpg.configure_item(f"activity_{name}", color=activity_color)
 
         # Calibration status
         td = self._tracker_data
@@ -589,6 +762,16 @@ class ControlPanel:
         dpg.configure_item("cal_progress", overlay=overlay)
 
         dpg.set_value("cal_error_text", td.calibration_error)
+
+        # Emergency stop status
+        if self._estop_active:
+            dpg.set_value("estop_status_text", "E-STOP ACTIVE — all commands zeroed. Click again to release.")
+            dpg.configure_item("btn_estop", label="[ RELEASE E-STOP ]")
+            dpg.bind_item_theme("btn_estop", "estop_theme_active")
+        else:
+            dpg.set_value("estop_status_text", "")
+            dpg.configure_item("btn_estop", label="[ EMERGENCY STOP ]")
+            dpg.bind_item_theme("btn_estop", "estop_theme_inactive")
 
         # Playback state
         dpg.set_value("playback_state_text", self._playback_state)
@@ -624,9 +807,35 @@ class ControlPanel:
             if pos is not None:
                 dpg.set_value(f"series_xy_{name}", [[float(pos[0])], [float(pos[1])]])
                 dpg.set_value(f"series_xz_{name}", [[float(pos[0])], [float(pos[2])]])
+                dpg.set_value(f"series_yz_{name}", [[float(pos[1])], [float(pos[2])]])
+
+    def _update_hand_tab(self) -> None:
+        hd = self._hand_data
+        has_data = False
+
+        if hd.left_joints is not None:
+            vals = hd.left_joints.tolist()
+            n = len(vals)
+            dpg.set_value("series_hand_left", [list(range(n)), vals])
+            has_data = True
+
+        if hd.right_joints is not None:
+            vals = hd.right_joints.tolist()
+            n = len(vals)
+            dpg.set_value("series_hand_right", [list(range(n)), vals])
+            has_data = True
+
+        if has_data:
+            dpg.set_value("hand_status_text", "Receiving hand data")
+            dpg.configure_item("hand_status_text", color=(80, 255, 80))
 
     def _update_joint_states_tab(self) -> None:
         jd = self._joint_data
+        has_data = bool(jd.left_arm_cmd or jd.right_arm_cmd or jd.torso_cmd)
+
+        if has_data:
+            dpg.set_value("joint_status_text", "Receiving joint data")
+            dpg.configure_item("joint_status_text", color=(80, 255, 80))
 
         # Left arm
         if jd.left_arm_cmd:
@@ -744,9 +953,13 @@ class ControlPanel:
             self._tcp_viewer_host = app_data
 
     def _estop_cb(self, sender=None, app_data=None, user_data=None):
-        logger.warning("EMERGENCY STOP triggered")
+        self._estop_active = not self._estop_active
+        if self._estop_active:
+            logger.warning("EMERGENCY STOP ACTIVATED — zeroing all commands")
+        else:
+            logger.info("Emergency stop released")
         if self._on_emergency_stop:
-            self._on_emergency_stop()
+            self._on_emergency_stop(self._estop_active)
 
     def _record_cb(self, sender=None, app_data=None, user_data=None):
         self._recording = not self._recording

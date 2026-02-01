@@ -117,14 +117,19 @@ teleop_system/
 ├── docs/                          # Documentation
 │   ├── user_guide.md              #   End-user guide
 │   ├── developer_guide.md         #   Developer/architecture guide
+│   ├── develop_plan.md            #   Development plans per session
+│   ├── develop_summary.md         #   Development results per session
+│   ├── debugging_log.md           #   Bug fix / debugging log
+│   ├── mocap_plan.md              #   Motion capture replay planning
 │   ├── PRD.md                     #   Product Requirements Document
 │   ├── TRD.md                     #   Technical Requirements Document
-│   └── Tasks.md                   #   Task tracking / development log
+│   └── Tasks.md                   #   Task tracking
 │
 ├── launch/                        # ROS2 launch files
-│   ├── slave_mujoco.launch.py     #   MuJoCo bridge only
-│   ├── master_sim.launch.py       #   Dummy publishers + teleop nodes
-│   ├── teleop_sim_full.launch.py  #   Combined (includes both above)
+│   ├── slave_mujoco.launch.py     #   MuJoCo bridge only (slave side)
+│   ├── master_sim.launch.py       #   Dummy publishers + teleop + GUI
+│   ├── master_mocap.launch.py     #   BVH replay + teleop + GUI
+│   ├── teleop_sim_full.launch.py  #   Combined (slave + master_sim)
 │   ├── teleop_mujoco_bridge.launch.py  # Legacy combined launcher
 │   ├── teleop_sim.launch.py       #   Basic simulation
 │   ├── teleop_full.launch.py      #   Full hardware
@@ -142,10 +147,14 @@ teleop_system/
 │   ├── run_teleop.py              #   Main entry point
 │   ├── launch_all.py              #   Launch all nodes (Python, no ros2 launch)
 │   ├── launch_slave.py            #   Launch slave only
-│   ├── launch_master.py           #   Launch master only
+│   ├── launch_master.py           #   Launch master only (simulated)
+│   ├── launch_master_mocap.py     #   Launch master only (BVH mocap)
 │   ├── demo_teleop_sim.py         #   Step-by-step MuJoCo demo
 │   ├── demo_rgbd_streaming.py     #   RGB-D streaming (TCP + ROS2)
 │   ├── demo_pointcloud_viewer.py  #   Point cloud visualization
+│   ├── download_cmu_bvh.py        #   Download CMU BVH motion data
+│   ├── run_mocap_replay.py        #   Standalone BVH replay + metrics
+│   ├── run_parameter_sweep.py     #   BVH parameter sweep automation
 │   └── test_*_standalone.py       #   Per-module standalone tests
 │
 ├── teleop_system/                 # Main Python package
@@ -209,8 +218,24 @@ teleop_system/
 │   │   ├── config_loader.py       #     Hydra/OmegaConf config loading
 │   │   └── logger.py              #     Centralized logging
 │   │
-│   └── gui/                       #   Optional GUI
-│       └── control_panel.py       #     DearPyGui control panel
+│   ├── mocap/                     #   Motion capture replay
+│   │   ├── bvh_loader.py          #     BVH parser + coord conversion
+│   │   ├── skeleton_mapper.py     #     BVH joint → TrackerRole mapping
+│   │   ├── bvh_tracker_adapter.py #     IMasterTracker for BVH playback
+│   │   ├── bvh_hand_adapter.py    #     IHandInput for BVH hand data
+│   │   ├── bvh_replay_publisher.py#     ROS2 replay publisher node
+│   │   ├── data_recorder.py       #     Data recording to .npz
+│   │   ├── metrics.py             #     Tracking/workspace/smoothness metrics
+│   │   ├── skeleton_viewer.py     #     Matplotlib 3D skeleton viewer
+│   │   └── dual_viewer.py         #     Side-by-side comparison viewer
+│   │
+│   ├── calibration/               #   Tracker calibration
+│   │   ├── pose_calibrator.py     #     A-Pose state machine + offsets
+│   │   └── calibration_node.py    #     ROS2 calibration service/publisher
+│   │
+│   └── gui/                       #   GUI control panel
+│       ├── control_panel.py       #     DearPyGui 5-tab control panel
+│       └── gui_node.py            #     ROS2 node wrapping ControlPanel
 │
 ├── tests/                         # Unit and integration tests
 │   ├── test_interfaces.py         #   Data class validation
@@ -224,11 +249,18 @@ teleop_system/
 │   ├── test_phase5_camera_head.py #   Head tracking
 │   ├── test_phase6_devices.py     #   Hardware drivers
 │   ├── test_ros2_rgbd.py          #   ROS2 RGB-D subscriber
-│   └── test_rgbd_streaming.py     #   Streaming codec
+│   ├── test_rgbd_streaming.py     #   Streaming codec
+│   ├── test_bvh_loader.py         #   BVH parser tests
+│   ├── test_skeleton_mapper.py    #   Skeleton mapping tests
+│   ├── test_bvh_tracker_adapter.py#   BVH adapter tests
+│   ├── test_metrics.py            #   Mocap metrics tests
+│   └── test_calibration.py        #   Calibration state machine tests
 │
 ├── package.xml                    # ROS2 package metadata
 ├── setup.py                       # Python package setup
 ├── setup.cfg                      # Pytest + flake8 config
+├── Dockerfile                     # Docker build for development
+├── .gitignore                     # Git ignore rules
 └── resource/teleop_system         # Ament index marker (empty)
 ```
 

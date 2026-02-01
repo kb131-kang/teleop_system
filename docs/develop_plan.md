@@ -4,6 +4,51 @@ This document tracks development plans for the RB-Y1 teleoperation system. Each 
 
 ---
 
+## 2026-02-01 (Session 6) — GUI Enhancements: E-Stop, Module Activity, Hand Viewer, 3-View Tracker
+
+### Objective
+
+Improve GUI control panel usability: fix non-functional Emergency Stop, add module activity tracking, add Hand Data tab, expand tracker view to 3-view, add joint states diagnostics, double window/font size.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `teleop_system/gui/control_panel.py` | HandData dataclass, 3-view tracker, hand tab, E-stop toggle with themes, module activity display, doubled window size |
+| `teleop_system/gui/gui_node.py` | E-stop 50Hz timer, hand/base_vel subscriptions, module activity tracking |
+| `docs/user_guide.md` | Font scaling, 5-tab descriptions, E-stop toggle docs |
+| `docs/debugging_log.md` | 3 entries: E-stop, module status, window size |
+
+### Result
+
+**Completed.** 270/270 tests pass.
+
+---
+
+## 2026-02-01 (Session 5) — Debugging, Staged Playback, TCP Viewer, GUI Scaling
+
+### Objective
+
+Fix GUI crash (exit code -6), add staged BVH playback with Start Playback button, add cross-machine TCP viewer mode, add auto-scaling font/window sizing.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `teleop_system/gui/gui_node.py` | Fixed exit -6 (spin thread join), added playback/TCP viewer/font_scale params |
+| `teleop_system/gui/control_panel.py` | Start Playback button, TCP viewer button, auto-scaling |
+| `teleop_system/mocap/bvh_replay_publisher.py` | Staged start: auto_start, READY/PLAYING states |
+| `launch/master_sim.launch.py` | viewer_mode/host/port, font_scale args |
+| `launch/master_mocap.launch.py` | Same + auto_start arg |
+| `scripts/launch_master.py`, `scripts/launch_master_mocap.py` | --viewer-mode/host/port flags |
+| `teleop_system/simulators/mujoco_ros2_bridge.py` | ParameterDescriptor(dynamic_typing=True) |
+
+### Result
+
+**Completed.** 270/270 tests pass.
+
+---
+
 ## 2026-02-01 (Session 4) — GUI Control Panel + Tracker Calibration
 
 ### Objective

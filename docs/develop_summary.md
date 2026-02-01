@@ -4,6 +4,83 @@ This document tracks development progress for the RB-Y1 teleoperation system. Ea
 
 ---
 
+## 2026-02-01 (Session 6) — GUI Enhancements: E-Stop, Module Activity, Hand Viewer, 3-View Tracker
+
+### Summary
+
+Major GUI control panel improvements: fixed non-functional Emergency Stop (now toggle with continuous 50Hz zero publishing), added live module activity tracking, added Hand Data tab with finger joint bar charts, expanded Tracker View to 3-view layout (XY/XZ/YZ), added joint states diagnostic messages, and doubled default window/font size for readability.
+
+### Changes
+
+| Change | Description |
+|--------|-------------|
+| Emergency Stop toggle | Changed from single-shot to toggle mode with 50Hz continuous zero publishing on all arm/hand/base topics. Visual feedback: button turns red when active, label changes to "RELEASE E-STOP". |
+| Module Status activity | Replaced static connected/enabled flags with `last_activity` timestamp tracking. Shows green (<2s), yellow (<10s), orange (>10s), gray (never). Added base_cmd_vel and hand joint subscriptions for Locomotion and Hand Teleop monitoring. |
+| Hand Data tab | New tab with left/right hand bar charts showing 20-DOF finger joint angles in real time. Subscribes to `/master/hand/{left,right}/joints`. |
+| 3-view tracker | Added Front (Y-Z) view alongside existing Top-Down (X-Y) and Side (X-Z) for pseudo-3D visualization. |
+| Window/font 2x | Base window: 1800×1000 (was 1000×700). Auto-scale minimum: 2.0x (was 1.0x). 4K→3.0x, 1440p→2.5x, 1080p→2.0x. |
+| Joint States diagnostics | Shows "Waiting for joint data..." message when no data sources are active. |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `teleop_system/gui/control_panel.py` | HandData dataclass, 3-view tracker, hand tab, E-stop toggle with themes, module activity display, joint/hand status text, doubled window size |
+| `teleop_system/gui/gui_node.py` | E-stop timer (50Hz), hand joint subscriptions, base_cmd_vel subscription, module activity tracking via `_mark_module_active()`, hand/E-stop publishers |
+| `docs/user_guide.md` | Font scaling section, updated tab descriptions (hand data, 3-view, module status colors), E-stop toggle docs |
+| `docs/debugging_log.md` | 3 new entries: E-stop, module status, window size |
+
+### Test Results
+
+- **270/270 tests pass** (no regressions)
+
+---
+
+## 2026-02-01 (Session 5) — Debugging, Staged Playback, TCP Viewer, GUI Scaling
+
+### Summary
+
+Fixed GUI crash (exit code -6), implemented staged BVH playback with Start Playback button, added cross-machine TCP viewer mode to launchers and GUI, and added auto-scaling font/window sizing based on screen resolution.
+
+### Bug Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| GUI exit code -6 (SIGABRT) even after error-message improvement | ROS2 executor spin thread still joinable when `rclpy.shutdown()` called; C++ std::thread destructor calls terminate() | Added `spin_thread.join(timeout=3.0)` after `executor.shutdown()` in both error and normal paths |
+| `camera_fps:=30` INTEGER vs DOUBLE type error | `declare_parameter("camera_fps", 15.0)` locks type to DOUBLE | Added `ParameterDescriptor(dynamic_typing=True)` to all numeric/bool params |
+| MuJoCo model not found in colcon install tree | `__file__` path inside `ros2_ws/install/` doesn't reach source root | Added CWD fallback path resolution |
+| matplotlib < 3.9.0 crashes with NumPy 2.x | Incompatible C extension linking | Updated requirement to `matplotlib>=3.9.0` |
+
+### New Features
+
+| Feature | Description |
+|---------|-------------|
+| Staged BVH playback | BVH replay starts in READY state (frame 0 on loop). Press Start Playback or call `/teleop/start_playback` to begin motion. `auto_start` param to skip. |
+| TCP viewer mode | Launchers support `viewer_mode:=client viewer_host:=<ip>` for cross-machine first-person camera. GUI has "Viewer (TCP)" button with host/port input. |
+| GUI auto-scaling | Font and window size auto-detect from screen resolution via `xrandr`. Manual override: `font_scale:=2.0`. |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `teleop_system/gui/gui_node.py` | Fixed exit -6 (spin thread join), added playback/TCP viewer/font_scale params |
+| `teleop_system/gui/control_panel.py` | Added Start Playback button, TCP viewer button, auto-scaling, playback state display |
+| `teleop_system/mocap/bvh_replay_publisher.py` | Staged start: auto_start param, READY/PLAYING states, /teleop/start_playback service |
+| `teleop_system/mocap/bvh_hand_adapter.py` | Added `pause()`/`resume()` methods |
+| `teleop_system/utils/ros2_helpers.py` | Added `PLAYBACK_STATE`, `START_PLAYBACK` names |
+| `launch/master_sim.launch.py` | Added viewer_mode/host/port, font_scale args, GUI params |
+| `launch/master_mocap.launch.py` | Same + auto_start arg |
+| `scripts/launch_master.py` | Added --viewer-mode/host/port flags |
+| `scripts/launch_master_mocap.py` | Same + --auto-start flag |
+| `setup.py` | Updated matplotlib>=3.9.0 |
+| `teleop_system/simulators/mujoco_ros2_bridge.py` | ParameterDescriptor(dynamic_typing=True), CWD fallback |
+
+### Test Results
+
+- **270/270 tests pass** (no regressions)
+
+---
+
 ## 2026-02-01 (Session 4) — GUI Control Panel + Tracker Calibration
 
 ### Summary

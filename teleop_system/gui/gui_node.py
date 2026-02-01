@@ -71,8 +71,11 @@ def main():
 
             # Set callbacks
             self._panel.set_calibrate_callback(self._request_calibration)
-            self._panel.set_emergency_stop_callback(self._emergency_stop)
+            self._panel.set_emergency_stop_callback(self._toggle_emergency_stop)
             self._panel.set_start_playback_callback(self._request_start_playback)
+
+            # E-stop timer (created on demand)
+            self._estop_timer = None
 
             # ROS2 subscriptions
             sensor_qos = get_qos_profile(QoSPreset.SENSOR_DATA)
@@ -124,6 +127,24 @@ def main():
                 self._joint_states_cb, sensor_qos,
             )
 
+            # Hand joint input subscriptions
+            self.create_subscription(
+                JointState, TopicNames.HAND_LEFT_JOINTS,
+                lambda msg: self._hand_input_cb("left", msg),
+                sensor_qos,
+            )
+            self.create_subscription(
+                JointState, TopicNames.HAND_RIGHT_JOINTS,
+                lambda msg: self._hand_input_cb("right", msg),
+                sensor_qos,
+            )
+
+            # Locomotion output (for module activity monitoring)
+            self.create_subscription(
+                Twist, TopicNames.BASE_CMD_VEL,
+                self._base_vel_cb, cmd_qos,
+            )
+
             # Calibration state subscription
             self.create_subscription(
                 String, TopicNames.CALIBRATION_STATE,
@@ -136,7 +157,7 @@ def main():
                 self._cal_offsets_cb, status_qos,
             )
 
-            # Emergency stop publishers
+            # Emergency stop publishers (all command topics)
             self._estop_arm_left = self.create_publisher(
                 JointState, TopicNames.ARM_LEFT_CMD, cmd_qos,
             )
@@ -145,6 +166,12 @@ def main():
             )
             self._estop_base = self.create_publisher(
                 Twist, TopicNames.BASE_CMD_VEL, cmd_qos,
+            )
+            self._estop_hand_left = self.create_publisher(
+                JointState, TopicNames.HAND_LEFT_CMD, cmd_qos,
+            )
+            self._estop_hand_right = self.create_publisher(
+                JointState, TopicNames.HAND_RIGHT_CMD, cmd_qos,
             )
 
             # Calibration service client
@@ -176,6 +203,11 @@ def main():
         # ROS2 callbacks (run in executor thread)
         # ----------------------------------------------------------
 
+        def _mark_module_active(self, module_name: str) -> None:
+            """Update last_activity timestamp for a module (must hold lock)."""
+            if module_name in self._panel._modules:
+                self._panel._modules[module_name].last_activity = time.monotonic()
+
         def _tracker_cb(self, role_name: str, msg: PoseStamped) -> None:
             pos = np.array([
                 msg.pose.position.x,
@@ -191,6 +223,7 @@ def main():
                 self._panel.tracker_data.positions["head"] = np.array([
                     0.0, 0.0, 1.55,
                 ])
+                self._mark_module_active("Camera")
 
         def _joint_cmd_cb(self, group: str, msg: JointState) -> None:
             t = time.monotonic() - self._start_time
@@ -202,10 +235,26 @@ def main():
                 jd = self._panel.joint_data
                 if group == "left_arm":
                     jd.left_arm_cmd.append((t, positions))
+                    self._mark_module_active("Arm Teleop")
                 elif group == "right_arm":
                     jd.right_arm_cmd.append((t, positions))
+                    self._mark_module_active("Arm Teleop")
                 elif group == "torso":
                     jd.torso_cmd.append((t, positions))
+                    self._mark_module_active("Arm Teleop")
+
+        def _hand_input_cb(self, side: str, msg: JointState) -> None:
+            positions = np.array(msg.position) if msg.position else None
+            if positions is None or len(positions) == 0:
+                return
+
+            with self._panel.lock:
+                hd = self._panel.hand_data
+                if side == "left":
+                    hd.left_joints = positions
+                else:
+                    hd.right_joints = positions
+                self._mark_module_active("Hand Teleop")
 
         def _joint_states_cb(self, msg: JointState) -> None:
             t = time.monotonic() - self._start_time
@@ -214,6 +263,10 @@ def main():
                 return
             with self._panel.lock:
                 self._panel.joint_data.joint_states.append((t, positions))
+
+        def _base_vel_cb(self, msg: Twist) -> None:
+            with self._panel.lock:
+                self._mark_module_active("Locomotion")
 
         def _cal_state_cb(self, msg: String) -> None:
             try:
@@ -301,17 +354,36 @@ def main():
             except Exception as e:
                 self.get_logger().error(f"Calibration service error: {e}")
 
-        def _emergency_stop(self) -> None:
-            """Publish zero commands to all output topics."""
-            self.get_logger().warning("EMERGENCY STOP — zeroing all commands")
+        def _toggle_emergency_stop(self, active: bool) -> None:
+            """Toggle continuous zero-command publishing on all output topics."""
+            if active:
+                self.get_logger().warning("EMERGENCY STOP ACTIVATED")
+                # Publish zeros immediately
+                self._publish_estop_zeros()
+                # Create timer for continuous zero publishing at 50Hz
+                if self._estop_timer is None:
+                    self._estop_timer = self.create_timer(
+                        0.02, self._publish_estop_zeros,
+                    )
+            else:
+                self.get_logger().info("Emergency stop released")
+                if self._estop_timer is not None:
+                    self._estop_timer.cancel()
+                    self.destroy_timer(self._estop_timer)
+                    self._estop_timer = None
 
-            # Zero arm commands
+        def _publish_estop_zeros(self) -> None:
+            """Publish zero commands to all output topics."""
             zero_arm = JointState()
             zero_arm.position = [0.0] * 7
             self._estop_arm_left.publish(zero_arm)
             self._estop_arm_right.publish(zero_arm)
 
-            # Zero base velocity
+            zero_hand = JointState()
+            zero_hand.position = [0.0] * 20
+            self._estop_hand_left.publish(zero_hand)
+            self._estop_hand_right.publish(zero_hand)
+
             zero_vel = Twist()
             self._estop_base.publish(zero_vel)
 

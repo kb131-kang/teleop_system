@@ -9,12 +9,20 @@
 
   <buildtool_depend>ament_python</buildtool_depend>
 
+  <!-- Core ROS2 dependencies -->
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>lifecycle_msgs</depend>
   <depend>rclpy_lifecycle</depend>
+
+  <!-- Python dependencies (system packages) -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

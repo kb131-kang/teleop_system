@@ -832,30 +832,62 @@ ros2 launch teleop_system teleop_sim_full.launch.py
 # Disable GUI
 ros2 launch teleop_system teleop_sim_full.launch.py launch_gui:=false
 
+# Custom font scale (default: auto-detect from screen resolution, minimum 2.0x)
+ros2 launch teleop_system master_sim.launch.py font_scale:=3.0
+
 # Python script launcher
 python3 scripts/launch_master.py           # GUI enabled by default
 python3 scripts/launch_master.py --no-gui  # Disable GUI
 ```
 
+### Font & Window Scaling
+
+The GUI auto-detects screen resolution via `xrandr` and scales the window and font accordingly:
+
+| Resolution | Auto Scale | Window Size |
+|-----------|-----------|-------------|
+| 4K (3840+) | 3.0x | ~2700x1500 |
+| 1440p (2560+) | 2.5x | ~2250x1250 |
+| 1080p and below | 2.0x | 1800x1000 |
+
+Override with the `font_scale` launch argument: `font_scale:=2.5`
+
 ### Tab Layout
 
 **Status Tab**
-- Module status indicators (green=active, yellow=connected but disabled, red=disconnected)
+- Module status indicators with live activity tracking:
+  - Green = active (data received within last 2s)
+  - Yellow = stale (data received but older than 2s)
+  - Orange = no data for >10s
+  - Gray = no data ever received
 - System mode selection (Simulation/Hardware)
 - Playback state (READY=yellow, PLAYING=green) — shown when BVH replay is active
 - Calibration status with progress bar
-- Action buttons: Start Playback, Calibrate, RGB-D Viewer, Emergency Stop, Record
+- Action buttons: Start Playback, Calibrate, Viewer (ROS2), Record
+- Emergency Stop toggle (large red button, continuous zero publishing while active)
+- TCP Viewer with host/port input fields
 
 **Tracker View Tab**
-- Two scatter plots: Top-Down (X-Y) and Side (X-Z) views
+- Three scatter plots for pseudo-3D visualization:
+  - Top-Down (X-Y): forward vs left
+  - Side (X-Z): forward vs height
+  - Front (Y-Z): left vs height
 - 6 color-coded tracker positions updated at 10Hz
 - Color legend: right_hand=red, left_hand=blue, waist=green, feet=orange, head=purple
+
+**Hand Data Tab**
+- Bar charts showing real-time finger joint angles for left and right hands
+- 20-DOF per hand (Thumb/Index/Middle/Ring/Pinky × MCP/PIP/DIP/Tip)
+- Data source: dummy_glove_pub, BVH replay, or Manus glove hardware
+- Shows "Waiting for hand data..." when no publisher is running
 
 **Joint States Tab**
 - Rolling time series plots (~5s window) for:
   - Left arm joints (7 DoF)
   - Right arm joints (7 DoF)
   - Torso joints (6 DoF)
+- Shows "Waiting for joint data..." when arm teleop or slave bridge is not running
+- Requires: arm_teleop_node (publishes joint commands) and/or MuJoCo bridge (publishes joint states)
 
 **Parameters Tab**
 - Real-time parameter sliders: position_scale, orientation_scale, max_joint_velocity, ik_posture_cost, hand_smoothing, locomotion_deadzone
@@ -867,7 +899,7 @@ python3 scripts/launch_master.py --no-gui  # Disable GUI
 | Start Playback | Starts BVH motion playback (enabled when BVH publisher is in READY state) |
 | Calibrate (A-Pose) | Triggers tracker calibration (see Section 12) |
 | Viewer (ROS2) | Launches point cloud viewer subscribing to ROS2 camera topics (same machine) |
-| EMERGENCY STOP | Publishes zero commands to all arm + base topics |
+| EMERGENCY STOP | Toggle: activates continuous zero-command publishing on all arm/hand/base topics at 50Hz. Click again to release. Button turns bright red when active. |
 | Record | Toggles data recording (placeholder for future) |
 | Viewer (TCP) | Launches TCP client viewer connecting to slave streaming server (cross-machine). Enter slave IP and port in the input fields next to the button. |
 
