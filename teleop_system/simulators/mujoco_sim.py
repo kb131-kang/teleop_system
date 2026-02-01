@@ -173,10 +173,34 @@ class MuJoCoSimulator(ISimulator):
             [0.0, 0.0, 1.0],
         ])
 
+        # Compute camera-to-world extrinsics (in Y-up visualization frame).
+        #
+        # Chain: OpenCV camera → OpenGL camera → MuJoCo world (Z-up) → viewer world (Y-up)
+        #
+        # 1. cam_xmat: MuJoCo camera (OpenGL: Y-up, Z-backward) → MuJoCo world (Z-up)
+        # 2. cv2gl: OpenCV (Y-down, Z-forward) → OpenGL (Y-up, Z-backward)
+        # 3. zup2yup: MuJoCo Z-up → viewer Y-up
+        cam_pos_mj = self._data.cam_xpos[cam_id].copy()       # (3,) Z-up world
+        cam_rot_mj = self._data.cam_xmat[cam_id].reshape(3, 3).copy()  # GL-cam → Z-up world
+
+        # OpenCV to OpenGL: flip Y and Z
+        cv2gl = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]], dtype=np.float64)
+
+        # MuJoCo Z-up to viewer Y-up: X→X, Z→Y, Y→-Z
+        zup2yup = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=np.float64)
+
+        R_cv_to_viewer = zup2yup @ cam_rot_mj @ cv2gl
+        t_viewer = zup2yup @ cam_pos_mj
+
+        extrinsics = np.eye(4, dtype=np.float64)
+        extrinsics[:3, :3] = R_cv_to_viewer
+        extrinsics[:3, 3] = t_viewer
+
         return RGBDFrame(
             rgb=rgb,
             depth=depth,
             intrinsics=intrinsics,
+            extrinsics=extrinsics,
             timestamp=self._data.time,
             width=width,
             height=height,

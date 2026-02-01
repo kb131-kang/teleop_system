@@ -50,19 +50,51 @@ class PointCloudGenerator:
     def generate(self, frame: RGBDFrame) -> dict:
         """Generate a point cloud from an RGB-D frame.
 
+        Back-projects depth pixels to 3D using camera intrinsics.
+        If the frame has non-identity extrinsics, points are transformed
+        from camera frame to world frame.
+
         Args:
-            frame: Input RGB-D frame with intrinsics.
+            frame: Input RGB-D frame with intrinsics and optional extrinsics.
 
         Returns:
             Dict with:
-                - 'points': (N, 3) float32 xyz positions
+                - 'points': (N, 3) float32 xyz positions (world frame if extrinsics available)
                 - 'colors': (N, 3) float32 rgb in [0, 1]
                 - 'count': Number of points
                 - 'o3d_pcd': Open3D PointCloud object (if Open3D is available)
         """
         if self._use_open3d:
-            return self._generate_open3d(frame)
-        return self._generate_numpy(frame)
+            result = self._generate_open3d(frame)
+        else:
+            result = self._generate_numpy(frame)
+
+        # Transform from camera frame to world frame if extrinsics are provided
+        if result["count"] > 0 and not np.allclose(frame.extrinsics, np.eye(4)):
+            result["points"] = self._transform_to_world(
+                result["points"], frame.extrinsics
+            )
+            if result.get("o3d_pcd") is not None and _OPEN3D_AVAILABLE:
+                result["o3d_pcd"].points = o3d.utility.Vector3dVector(result["points"])
+
+        return result
+
+    @staticmethod
+    def _transform_to_world(
+        points: np.ndarray, extrinsics: np.ndarray
+    ) -> np.ndarray:
+        """Transform points from camera frame to world frame.
+
+        Args:
+            points: (N, 3) points in OpenCV camera frame.
+            extrinsics: (4, 4) camera-to-world homogeneous transform.
+
+        Returns:
+            (N, 3) points in world frame.
+        """
+        R = extrinsics[:3, :3]
+        t = extrinsics[:3, 3]
+        return (points @ R.T + t).astype(np.float32)
 
     def _generate_open3d(self, frame: RGBDFrame) -> dict:
         """Generate point cloud using Open3D."""

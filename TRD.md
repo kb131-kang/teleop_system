@@ -170,19 +170,28 @@ class ICameraStream(ABC):
 
 ### 3.3 구현체 구조
 
-| 인터페이스 | 실제 HW 구현체 | 시뮬레이터 구현체 |
-|-----------|---------------|-----------------|
-| `IMasterTracker` | `ViveTracker` (PyOpenVR) | `SimulatedTracker` (모션 데이터 재생) |
-| `IHandInput` | `ManusGlove` (MANUS SDK) | `SimulatedHand` (더미/모션 데이터) |
-| `ISlaveArm` | `RBY1Arm` (rby1-sdk) | `IsaacLabArm` / `MuJoCoArm` |
-| `ISlaveHand` | `DG5FHand` (DELTO_M_ROS2) | `IsaacLabHand` / `MuJoCoHand` |
-| `IMobileBase` | `RBY1Base` (rby1-sdk) | `IsaacLabBase` / `MuJoCoBase` |
-| `IIKSolver` | `PinkIKSolver` | `PinkIKSolver` (동일) |
-| `ICameraStream` | `RealSenseCamera` (ROS2) | `SimCameraStream` (시뮬레이터 렌더) |
+> **[2025-01-31 Updated]** 실제 구현 완료 상태 반영.
+
+| 인터페이스 | 실제 HW 구현체 | 시뮬레이터 구현체 | 상태 |
+|-----------|---------------|-----------------|------|
+| `IMasterTracker` | `ViveTracker` (PyOpenVR) | `SimulatedTracker` (합성 포즈) | HW: SDK 없이 graceful fallback, Sim: 완료 |
+| `IHandInput` | `ManusGlove` (MANUS SDK ROS2) | `SimulatedHand` (합성 관절) | HW: SDK 없이 graceful fallback, Sim: 완료 |
+| `ISlaveArm` | `RBY1Arm` (rby1-sdk) | `MuJoCoArm` (mujoco_sim.py 내부 클래스) | HW: SDK 없이 graceful fallback, Sim: 완료 |
+| `ISlaveHand` | `DG5FHand` (ros2_control) | `MuJoCoHand` (mujoco_sim.py 내부 클래스) | HW: SDK 없이 graceful fallback, Sim: 완료 |
+| `IMobileBase` | `RBY1Base` (rby1_arm.py 내 통합) | `MuJoCoBase` (mujoco_sim.py 내부 클래스) | HW: SDK 없이 graceful fallback, Sim: 완료 |
+| `IIKSolver` | `PinkIKSolver` | `PinkIKSolver` (동일) + `SimpleProportionalMapper` (폴백) | 완료 |
+| `ICameraStream` | `RealSenseCamera` (ROS2 토픽) | `SimCameraStream` (MuJoCo 렌더링) | HW: 구현됨, Sim: 완료 |
+| `ISimulator` | — | `MuJoCoSimulator` (mujoco_sim.py) | 완료 |
+
+**참고**: `MuJoCoArm`, `MuJoCoBase`, `MuJoCoHand`는 별도 파일이 아닌 `mujoco_sim.py` 내 nested class로 구현됨.
+`RBY1Base`는 `rby1_base.py` 대신 `rby1_arm.py`에 통합되어 있음.
 
 ---
 
 ## 4. 디렉토리 구조
+
+> **[2025-01-31 Updated]** 실제 구현 결과를 반영하여 디렉토리 구조를 업데이트함.
+> 각 모듈에 `ros2_adapters.py`가 추가되었고, 시뮬레이터에 더미 퍼블리셔 및 MuJoCo-ROS2 브릿지가 추가됨.
 
 ```
 teleop_system/
@@ -206,101 +215,133 @@ teleop_system/
 │   │
 │   ├── interfaces/                  # 추상 인터페이스 (ABC)
 │   │   ├── __init__.py
-│   │   ├── master_device.py         # IMasterTracker, IHandInput
-│   │   ├── slave_robot.py           # ISlaveArm, ISlaveHand, IMobileBase
-│   │   ├── ik_solver.py             # IIKSolver
-│   │   ├── camera_stream.py         # ICameraStream
-│   │   └── simulator.py             # ISimulator
+│   │   ├── master_device.py         # IMasterTracker, IHandInput, Pose6D, HandJointState, TrackerRole
+│   │   ├── slave_robot.py           # ISlaveArm, ISlaveHand, IMobileBase, JointState, VelocityCommand, ArmSide
+│   │   ├── ik_solver.py             # IIKSolver, IKResult
+│   │   ├── camera_stream.py         # ICameraStream, RGBDFrame
+│   │   └── simulator.py             # ISimulator, SimState
 │   │
 │   ├── modules/                     # 기능 모듈 (독립 실행 가능)
 │   │   ├── __init__.py
 │   │   ├── arm_teleop/              # 양팔 + 토르소 텔레오퍼레이션
 │   │   │   ├── __init__.py
-│   │   │   ├── arm_teleop_node.py   # ROS2 노드
-│   │   │   └── arm_controller.py    # 제어 로직
+│   │   │   ├── arm_teleop_node.py   # ROS2 Lifecycle 노드
+│   │   │   ├── arm_controller.py    # 제어 로직 (순수 Python, ROS2 무관)
+│   │   │   └── ros2_adapters.py     # ROS2TrackerAdapter, ROS2ArmCommandPublisher
 │   │   ├── locomotion/              # AMR 이동부 텔레오퍼레이션
 │   │   │   ├── __init__.py
-│   │   │   ├── locomotion_node.py
-│   │   │   └── gait_detector.py     # 보행 패턴 감지
+│   │   │   ├── locomotion_node.py   # ROS2 Lifecycle 노드
+│   │   │   ├── locomotion_controller.py  # 제어 로직 (순수 Python)
+│   │   │   ├── gait_detector.py     # 보행 패턴 감지 알고리즘
+│   │   │   └── ros2_adapters.py     # ROS2BaseCommandPublisher
 │   │   ├── hand_teleop/             # 핸드 텔레오퍼레이션
 │   │   │   ├── __init__.py
-│   │   │   ├── hand_teleop_node.py
-│   │   │   └── retargeting.py       # Manus → DG-5F 매핑
-│   │   └── camera/                  # VR 카메라 스트리밍
+│   │   │   ├── hand_teleop_node.py  # ROS2 Lifecycle 노드
+│   │   │   ├── hand_controller.py   # 제어 로직 (순수 Python)
+│   │   │   ├── retargeting.py       # Manus → DG-5F 매핑 (HandRetargeting)
+│   │   │   └── ros2_adapters.py     # ROS2GloveAdapter, ROS2HandCommandPublisher
+│   │   └── camera/                  # VR 카메라 스트리밍 + 헤드 텔레오퍼레이션
 │   │       ├── __init__.py
-│   │       ├── camera_node.py
-│   │       ├── pointcloud_generator.py
-│   │       └── vr_renderer.py       # 포인트 클라우드 VR 렌더링
+│   │       ├── camera_node.py       # ROS2 Lifecycle 노드 (HMD→Pan/Tilt)
+│   │       ├── camera_controller.py # 제어 로직 (HMD→euler→pan/tilt, EMA 스무딩)
+│   │       ├── pointcloud_generator.py  # RGB-D → Open3D PointCloud 변환
+│   │       ├── pointcloud_viewer.py # GLFW+OpenGL 포인트 클라우드 뷰어
+│   │       └── ros2_adapters.py     # ROS2HMDAdapter, ROS2CameraAdapter
 │   │
 │   ├── devices/                     # HW 디바이스 구현체
 │   │   ├── __init__.py
-│   │   ├── vive_tracker.py          # IMasterTracker 구현
-│   │   ├── manus_glove.py           # IHandInput 구현
-│   │   ├── rby1_arm.py              # ISlaveArm 구현
-│   │   ├── rby1_base.py             # IMobileBase 구현
-│   │   ├── dg5f_hand.py             # ISlaveHand 구현
-│   │   └── realsense_camera.py      # ICameraStream 구현
+│   │   ├── vive_tracker.py          # ViveTracker, ViveTrackerManager (IMasterTracker)
+│   │   ├── vive_tracker_pub.py      # Vive Tracker → ROS2 PoseStamped 퍼블리셔
+│   │   ├── manus_glove.py           # ManusGlove (IHandInput)
+│   │   ├── rby1_arm.py              # RBY1Arm (ISlaveArm) + RBY1Base (IMobileBase)
+│   │   ├── dg5f_hand.py             # DG5FHand (ISlaveHand)
+│   │   └── realsense_camera.py      # RealSenseCamera (ICameraStream)
 │   │
 │   ├── simulators/                  # 시뮬레이터 구현체
 │   │   ├── __init__.py
-│   │   ├── isaac_lab_sim.py         # Isaac Lab 백엔드
-│   │   ├── mujoco_sim.py            # MuJoCo 백엔드
-│   │   ├── simulated_tracker.py     # IMasterTracker 시뮬레이터
-│   │   └── simulated_hand.py        # IHandInput 시뮬레이터
+│   │   ├── mujoco_sim.py            # MuJoCoSimulator + MuJoCoArm + MuJoCoBase + MuJoCoHand
+│   │   ├── sim_camera_stream.py     # SimCameraStream (ICameraStream, MuJoCo 렌더링)
+│   │   ├── simulated_tracker.py     # SimulatedTracker (IMasterTracker, 합성 포즈)
+│   │   ├── simulated_hand.py        # SimulatedHand (IHandInput, 합성 관절)
+│   │   ├── dummy_tracker_pub.py     # 더미 ROS2 트래커 퍼블리셔 (양손+허리+양발)
+│   │   ├── dummy_hmd_pub.py         # 더미 HMD 오리엔테이션 퍼블리셔
+│   │   ├── dummy_glove_pub.py       # 더미 글러브 관절 퍼블리셔
+│   │   └── mujoco_ros2_bridge.py    # MuJoCo ↔ ROS2 물리 상태 브릿지
 │   │
 │   ├── solvers/                     # IK 솔버 등 알고리즘
 │   │   ├── __init__.py
-│   │   └── pink_ik_solver.py        # Pink 기반 IK 구현
+│   │   ├── pink_ik_solver.py        # PinkIKSolver (프로덕션, differential IK)
+│   │   └── proportional_mapper.py   # SimpleProportionalMapper (폴백 IK, Pink 불필요)
 │   │
 │   ├── gui/                         # GUI 제어 패널
 │   │   ├── __init__.py
-│   │   └── control_panel.py         # Dear PyGui 기반
+│   │   └── control_panel.py         # Dear PyGui 기반 (dpg 없을 시 graceful fallback)
 │   │
 │   └── utils/                       # 유틸리티
 │       ├── __init__.py
-│       ├── transforms.py            # 좌표 변환, 쿼터니언 연산
-│       ├── ros2_helpers.py          # ROS2 토픽/서비스 유틸
-│       ├── config_loader.py         # Hydra 설정 로더
-│       └── logger.py                # 모듈별 로거 설정
+│       ├── transforms.py            # 좌표 변환, 쿼터니언 연산 (순수 numpy)
+│       ├── ros2_helpers.py          # QoS 프로파일, 토픽/서비스 이름 상수
+│       ├── config_loader.py         # Hydra/OmegaConf 설정 로더
+│       └── logger.py                # 모듈별 로거 팩토리
 │
 ├── launch/                          # ROS2 launch 파일
-│   ├── teleop_full.launch.py        # 전체 시스템 실행
+│   ├── teleop_full.launch.py        # 전체 시스템 실행 (HW 모드)
 │   ├── teleop_sim.launch.py         # 시뮬레이션 모드 실행
+│   ├── teleop_mujoco_bridge.launch.py  # MuJoCo 브릿지 + 전체 더미 노드
 │   ├── arm_only.launch.py           # 팔 모듈만 실행
 │   └── hand_only.launch.py          # 핸드 모듈만 실행
 │
 ├── models/                          # URDF, MJCF 모델 파일
-│   ├── rby1/                        # RB-Y1 URDF
-│   └── dg5f/                        # DG-5F URDF/메시
+│   ├── rby1/                        # RB-Y1 MJCF/URDF + 60개 이상 메시
+│   │   ├── model_teleop.xml         # MuJoCo 텔레옵 전용 모델 (추천)
+│   │   ├── rby1.xml / rby1.urdf     # 기본 MJCF/URDF
+│   │   └── assets/                  # OBJ/충돌 메시 (LINK_1..20, NECK, PAN_TILT 등)
+│   └── dg5f/                        # DG-5F URDF + 좌/우 메시
+│       ├── dg5f.urdf
+│       └── meshes/                  # visual/ + collision/ STL
 │
 ├── scripts/                         # 실행 스크립트 및 예제
-│   ├── run_teleop.py                # 메인 진입점
+│   ├── run_teleop.py                # 메인 진입점 (--mode, --sim-backend, --modules)
+│   ├── run_mujoco_bridge.py         # MuJoCo↔ROS2 브릿지 실행
+│   ├── demo_teleop_sim.py           # 프로포셔널 IK 데모 (Pink 불필요)
+│   ├── demo_mujoco_viewer.py        # MuJoCo 뷰어
+│   ├── demo_pointcloud_viewer.py    # 포인트 클라우드 시각화 데모
+│   ├── test_arm_teleop_standalone.py       # 팔 독립 테스트 (ROS2 불필요)
+│   ├── test_hand_teleop_standalone.py      # 핸드 독립 테스트
+│   ├── test_locomotion_standalone.py       # 이동부 독립 테스트
+│   ├── test_camera_teleop_standalone.py    # 카메라 독립 테스트
+│   ├── test_camera_streaming.py            # RGB-D 스트리밍 품질 검증
+│   ├── verify_pointcloud_pipeline.py       # 포인트 클라우드 파이프라인 검증 (headless)
 │   └── examples/
-│       ├── test_ik_solver.py        # IK 단위 테스트
-│       ├── test_vive_tracker.py     # Vive 연결 테스트
-│       └── test_manus_glove.py      # Manus 연결 테스트
+│       ├── test_ik_solver.py        # IK 솔버 API 데모
+│       └── test_multichain_ik.py    # 3체인 IK 수렴 데모
 │
-├── tests/                           # 단위/통합 테스트
-│   ├── test_interfaces.py
-│   ├── test_arm_teleop.py
-│   ├── test_locomotion.py
-│   ├── test_hand_teleop.py
-│   └── test_simulation.py
+├── tests/                           # Phase별 단위/통합 테스트 (160개)
+│   ├── test_transforms.py           # Phase 1: 쿼터니언/오일러/프레임 변환
+│   ├── test_interfaces.py           # Phase 1: 인터페이스 데이터클래스
+│   ├── test_config.py               # Phase 1: 설정 로딩
+│   ├── test_arm_teleop.py           # Phase 2: ArmController 단위 테스트
+│   ├── test_simulation.py           # Phase 2: MuJoCo 시뮬레이터
+│   ├── test_phase3_multichain.py    # Phase 3: 3체인 IK 통합
+│   ├── test_phase4_locomotion_hand.py  # Phase 4: 보행 감지 + 핸드 리타겟팅
+│   ├── test_phase5_camera_gui.py    # Phase 5: 카메라 + GUI
+│   ├── test_phase5_camera_head.py   # Phase 5: 헤드 트래킹 + 포인트 클라우드
+│   └── test_phase6_devices.py       # Phase 6: 하드웨어 드라이버 (SDK 없이 동작)
 │
-├── docker/                          # Docker 설정
-│   ├── Dockerfile
-│   └── docker-compose.yaml
-│
-├── setup.py                         # Python 패키지 설정
+├── setup.py                         # Python 패키지 설정 + ROS2 entry points
 ├── setup.cfg
 ├── package.xml                      # ROS2 패키지 메타데이터
-├── CMakeLists.txt                   # C++ 빌드 (필요 시)
 ├── requirements.txt
-├── PRD.md
-├── TRD.md
-├── Tasks.md
-└── README.md
+├── CLAUDE.md                        # AI 코딩 가이드
+├── PRD.md                           # 요구사항 정의서
+├── TRD.md                           # 기술 사양서
+├── Tasks.md                         # 개발 태스크 목록
+└── CHANGE_LOG.md                    # 변경 이력
 ```
+
+> **참고**: 초기 계획에 있던 `docker/`, `CMakeLists.txt`, `README.md`는 아직 미생성.
+> `rby1_base.py`는 별도 파일 대신 `rby1_arm.py`에 `RBY1Base` 클래스로 통합됨.
+> `isaac_lab_sim.py`는 아직 stub 상태 (Isaac Lab 연동은 Phase 6 진행 중).
 
 ---
 
@@ -409,7 +450,7 @@ hydra-core>=1.3.0
 omegaconf>=2.3.0
 
 # Utilities
-transforms3d>=0.4.1           # 좌표 변환
+transforms3d>=0.4.1           # 좌표 변환 — 주의: setup.py에 선언되어 있으나 런타임에 미사용. utils/transforms.py가 순수 numpy로 구현.
 pyyaml>=6.0
 ```
 
@@ -444,35 +485,48 @@ Isaac Lab 2.3.0은 Isaac Sim 5.1 기반으로, [공식 설치 가이드](https:/
 
 SOLID 원칙에 따라 작은 단위부터 동작을 확인하고 기능을 추가합니다.
 
+> **[2025-01-31 Updated]** 실제 진행 상태 반영
+
 ```
-Phase 1: 기반 구축
-  ├─ 인터페이스 정의 (interfaces/)
-  ├─ 설정 시스템 (config/ + utils/config_loader.py)
-  ├─ 좌표 변환 유틸 (utils/transforms.py)
-  └─ MuJoCo에서 RB-Y1 URDF 로드 및 시각화 확인
+Phase 1: 기반 구축  ✅ 완료
+  ├─ 인터페이스 정의 (interfaces/) ✅
+  ├─ 설정 시스템 (config/ + utils/config_loader.py) ✅
+  ├─ 좌표 변환 유틸 (utils/transforms.py) ✅ (순수 numpy, transforms3d 미사용)
+  └─ MuJoCo에서 RB-Y1 URDF 로드 및 시각화 확인 ✅
 
-Phase 2: IK + 단일 팔 텔레오퍼레이션
-  ├─ PinkIKSolver 구현 및 단위 테스트
-  ├─ SimulatedTracker로 더미 입력 → IK → MuJoCo 시뮬레이션
-  └─ 단일 팔 동작 확인
+Phase 2: IK + 단일 팔 텔레오퍼레이션  ✅ 완료
+  ├─ PinkIKSolver 구현 및 단위 테스트 ✅ (300/300 IK 성공)
+  ├─ SimpleProportionalMapper 폴백 IK 추가 ✅ (원래 계획에 없던 추가 구현)
+  ├─ SimulatedTracker로 더미 입력 → IK → MuJoCo 시뮬레이션 ✅
+  ├─ ROS2 어댑터 패턴 확립 (ros2_adapters.py) ✅
+  └─ 단일 팔 동작 확인 ✅ (Standalone + ROS2 파이프라인)
 
-Phase 3: 양팔 + 토르소 통합
-  ├─ 3개 매니퓰레이터 동시 IK
-  ├─ 널스페이스 포스처 태스크 추가
-  └─ 시뮬레이터에서 전체 상체 동작 확인
+Phase 3: 양팔 + 토르소 통합  ✅ 완료
+  ├─ 3개 매니퓰레이터 동시 IK (ChainConfig 기반 가중치) ✅
+  ├─ 널스페이스 포스처 태스크 추가 ✅
+  └─ 시뮬레이터에서 전체 상체 동작 확인 ✅
 
-Phase 4: 이동부 + 핸드 추가
-  ├─ 보행 감지 알고리즘 구현 및 테스트
-  ├─ 핸드 리타겟팅 구현
-  └─ 시뮬레이터에서 전신 + 핸드 동작 확인
+Phase 4: 이동부 + 핸드 추가  ✅ 완료
+  ├─ 보행 감지 알고리즘 (GaitDetector) ✅ (87.6% 비제로 속도)
+  ├─ 핸드 리타겟팅 (HandRetargeting 20DoF→1 그리퍼) ✅
+  ├─ MuJoCoHand 어댑터 (20DoF→단일 ctrl, 20x 스케일링) ✅
+  └─ 시뮬레이터에서 전신 + 핸드 동작 확인 ✅
 
-Phase 5: VR 스트리밍 + GUI
-  ├─ 포인트 클라우드 생성 파이프라인
-  ├─ VR 렌더링 (로컬 회전 + 비동기 갱신)
-  └─ GUI 제어 패널
+Phase 5: VR 스트리밍 + GUI  ✅ 완료
+  ├─ SimCameraStream (MuJoCo 렌더링, double buffering) ✅
+  ├─ CameraController (HMD→Pan/Tilt, EMA 스무딩) ✅
+  ├─ 포인트 클라우드 생성 파이프라인 (37.1Hz, 130K+ 포인트/프레임) ✅
+  ├─ PointCloudViewer (GLFW+OpenGL) ✅
+  ├─ GUI 제어 패널 (Dear PyGui) ✅
+  └─ Launch 파일 작성 ✅
 
-Phase 6: 실제 HW 연동
-  ├─ Vive Tracker / Manus Glove 디바이스 드라이버
-  ├─ RB-Y1 / DG-5F 실 로봇 연동
-  └─ Isaac Lab 시뮬레이터 연동
+Phase 6: 실제 HW 연동  🔧 부분 완료
+  ├─ ViveTracker + ViveTrackerPub 구현 ✅ (SDK 없이 graceful fallback)
+  ├─ ManusGlove 구현 ✅ (SDK 없이 graceful fallback)
+  ├─ RBY1Arm + RBY1Base 구현 ✅ (SDK 없이 graceful fallback)
+  ├─ DG5FHand 구현 ✅ (SDK 없이 graceful fallback)
+  ├─ RealSenseCamera 구현 ✅ (ROS2 토픽 기반)
+  └─ Isaac Lab 시뮬레이터 연동 ⏳ (미착수)
 ```
+
+**테스트 현황**: 160개 pytest 테스트 전체 통과 (Phase 1~6 커버)

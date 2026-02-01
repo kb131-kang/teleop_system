@@ -20,6 +20,7 @@ setup(
         "vr": ["openvr>=2.12.1401"],
         "viz": ["open3d>=0.19.0"],
         "gui": ["dearpygui>=2.1.1"],
+        "streaming": ["lz4>=4.0.0", "pillow>=10.0.0"],
         "all": [
             "mujoco>=3.4.0",
             "pin>=2.7.0",
@@ -27,6 +28,8 @@ setup(
             "openvr>=2.12.1401",
             "open3d>=0.19.0",
             "dearpygui>=2.1.1",
+            "lz4>=4.0.0",
+            "pillow>=10.0.0",
         ],
         "test": ["pytest>=7.0.0", "pytest-cov>=4.0.0"],
     },

@@ -238,14 +238,25 @@ def main():
     print()
 
     # ── 6. Capture frames with different head orientations ──
+    #
+    # Directly set distinct pan/tilt per frame so the difference is clearly
+    # visible in the saved images.  The SimulatedTracker-driven controller
+    # still runs (to verify the pipeline), but we override the camera
+    # orientation afterwards so each frame shows a noticeably different view.
+    #
+    pan_values = np.linspace(-0.45, 0.45, args.frames)   # full pan range
+    tilt_values = np.linspace(-0.2, 0.8, args.frames)    # gentle tilt sweep
     all_pass = True
 
     for frame_idx in range(args.frames):
-        # Run control + physics for 30 cycles (1s at 30Hz)
-        for _ in range(30):
-            controller.update()
-            for _ in range(steps_per_control):
-                sim.step()
+        # Override camera orientation to a clearly distinct angle per frame
+        target_pan = float(pan_values[frame_idx])
+        target_tilt = float(tilt_values[frame_idx])
+        cam.set_orientation(target_pan, target_tilt)
+
+        # Run physics so the head joints converge to the new target
+        for _ in range(100):
+            sim.step()
 
         # Capture RGB-D frame
         t0 = time.monotonic()

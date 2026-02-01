@@ -32,10 +32,15 @@ import sys
 import time
 from pathlib import Path
 
-# MuJoCo uses EGL for off-screen rendering; GLFW is used only for the viewer window.
-# This must be set BEFORE importing mujoco.
+# MuJoCo rendering backend must be set BEFORE importing mujoco.
+# - Use "glfw" on desktops with a display (default when DISPLAY is set).
+# - Use "egl" for headless servers with EGL-capable GPU drivers.
+# Override by setting MUJOCO_GL=egl or MUJOCO_GL=glfw before running.
 if "MUJOCO_GL" not in os.environ:
-    os.environ["MUJOCO_GL"] = "egl"
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        os.environ["MUJOCO_GL"] = "glfw"
+    else:
+        os.environ["MUJOCO_GL"] = "egl"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -75,6 +80,8 @@ def main():
                         help="OpenGL point size")
     parser.add_argument("--with-robot-viewer", action="store_true",
                         help="Also launch MuJoCo passive viewer (shows robot)")
+    parser.add_argument("--no-camera-sync", action="store_true",
+                        help="Disable mouse-to-robot camera sync (use HMD tracker only)")
     parser.add_argument("--hmd-frequency", type=float, default=0.15,
                         help="Simulated HMD oscillation frequency (Hz)")
     parser.add_argument("--hmd-amplitude", type=float, default=0.08,
@@ -133,11 +140,14 @@ def main():
     )
 
     # ── 6. Point cloud viewer ──
+    # When camera sync is enabled, viewer mouse orbit also drives robot camera
+    camera_sync = None if args.no_camera_sync else cam
     viewer = PointCloudViewer(
         width=960,
         height=720,
         title="Head Camera Point Cloud",
         point_size=args.point_size,
+        camera=camera_sync,
     )
     if not viewer.initialize():
         print("  [ERROR] Failed to initialize viewer")
@@ -148,6 +158,9 @@ def main():
     viewer._cam_distance = 8.0
     viewer._cam_yaw = 180.0
     viewer._cam_pitch = -20.0
+    # Update reference point after setting initial view
+    if camera_sync is not None:
+        viewer.set_camera(cam)  # re-set to capture new ref_yaw/ref_pitch
 
     # ── 7. Optional robot viewer ──
     # Note: --with-robot-viewer requires MUJOCO_GL=glfw (not default EGL).
@@ -169,8 +182,9 @@ def main():
     print(f"  Head control: {args.control_fps} Hz")
     print(f"  Camera capture: {args.camera_fps} Hz")
     print(f"  Point cloud: voxel={args.voxel_size}m, max_depth={args.max_depth}m")
-    print(f"\n  Viewer controls: Left-drag=Rotate, Right-drag=Pan, "
-          f"Scroll=Zoom, R=Reset, Q=Quit")
+    print(f"  Camera sync: {'OFF (--no-camera-sync)' if args.no_camera_sync else 'ON (mouse orbit drives robot camera)'}")
+    print(f"\n  Viewer controls: Left-drag=Rotate{'+ Robot pan/tilt' if not args.no_camera_sync else ''}, "
+          f"Right-drag=Pan, Scroll=Zoom, R=Reset, Q=Quit")
     print("=" * 70 + "\n")
 
     # ── Main loop ──

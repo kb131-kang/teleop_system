@@ -18,6 +18,9 @@ class RGBDFrame:
         rgb: (H, W, 3) RGB image as uint8.
         depth: (H, W) depth image in meters as float32.
         intrinsics: (3, 3) camera intrinsic matrix.
+        extrinsics: (4, 4) camera-to-world homogeneous transform.
+            Maps points from OpenCV camera frame (X-right, Y-down, Z-forward)
+            to world frame. Identity means camera frame (no transform).
         timestamp: Capture time in seconds.
         width: Image width in pixels.
         height: Image height in pixels.
@@ -25,6 +28,7 @@ class RGBDFrame:
     rgb: np.ndarray = field(default_factory=lambda: np.zeros((480, 640, 3), dtype=np.uint8))
     depth: np.ndarray = field(default_factory=lambda: np.zeros((480, 640), dtype=np.float32))
     intrinsics: np.ndarray = field(default_factory=lambda: np.eye(3))
+    extrinsics: np.ndarray = field(default_factory=lambda: np.eye(4))
     timestamp: float = 0.0
     width: int = 640
     height: int = 480

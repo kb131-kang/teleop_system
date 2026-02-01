@@ -3,14 +3,22 @@
 Displays 3D point clouds with mouse rotation/zoom. Supports
 continuous updates for streaming visualization.
 
+Optionally syncs viewer mouse orbit to a robot camera (ICameraStream),
+so dragging the view also drives the robot's head pan/tilt.
+
 Requires: glfw, PyOpenGL (both available in this environment).
 """
 
+from __future__ import annotations
+
 import math
+import os
+import sys
 import time
 
 import numpy as np
 
+from teleop_system.interfaces.camera_stream import ICameraStream
 from teleop_system.utils.logger import get_logger
 
 logger = get_logger("pointcloud_viewer")
@@ -53,6 +61,7 @@ class PointCloudViewer:
         title: str = "Point Cloud Viewer",
         point_size: float = 2.0,
         background: tuple[float, float, float] = (0.1, 0.1, 0.15),
+        camera: ICameraStream | None = None,
     ):
         self._width = width
         self._height = height
@@ -73,6 +82,11 @@ class PointCloudViewer:
         self._mouse_y = 0.0
         self._left_pressed = False
         self._right_pressed = False
+
+        # Robot camera sync: viewer orbit drives robot head pan/tilt
+        self._camera: ICameraStream | None = camera
+        self._ref_yaw: float = 0.0     # viewer yaw at sync enable (degrees)
+        self._ref_pitch: float = -30.0  # viewer pitch at sync enable (degrees)
 
         # Point data
         self._points: np.ndarray | None = None
@@ -122,6 +136,11 @@ class PointCloudViewer:
         GL.glClearColor(*self._bg, 1.0)
 
         self._fps_timer = time.monotonic()
+
+        # Record reference point for camera sync (uses current yaw/pitch)
+        self._ref_yaw = self._cam_yaw
+        self._ref_pitch = self._cam_pitch
+
         logger.info(f"PointCloudViewer initialized ({self._width}x{self._height})")
         return True
 
@@ -247,6 +266,48 @@ class PointCloudViewer:
         self._cam_yaw = 0.0
         self._cam_pitch = -30.0
         self._cam_pan_offset = np.array([0.0, 0.0, 0.0])
+        # Reset robot camera reference point
+        self._ref_yaw = self._cam_yaw
+        self._ref_pitch = self._cam_pitch
+        if self._camera is not None:
+            self._camera.set_orientation(0.0, 0.0)
+
+    def set_camera(self, camera: ICameraStream | None) -> None:
+        """Set or clear the robot camera for viewer-to-robot sync.
+
+        When set, mouse orbit (left-drag) will also drive the robot
+        camera's pan/tilt joints, simulating VR head tracking.
+
+        Args:
+            camera: ICameraStream to sync, or None to disable.
+        """
+        self._camera = camera
+        # Record current viewer orientation as the reference (zero) point
+        self._ref_yaw = self._cam_yaw
+        self._ref_pitch = self._cam_pitch
+
+    def _sync_camera_orientation(self) -> None:
+        """Map viewer yaw/pitch delta to robot pan/tilt and send command."""
+        if self._camera is None:
+            return
+
+        # Delta from reference point (degrees)
+        delta_yaw = self._cam_yaw - self._ref_yaw
+        delta_pitch = self._cam_pitch - self._ref_pitch
+
+        # Convert to radians and map to robot joint ranges.
+        # head_0 (pan):  [-0.523, 0.523] rad — positive = turn left
+        # head_1 (tilt): [-0.35, 1.57] rad  — positive = tilt back/up
+        #
+        # Viewer yaw increases when dragging right (orbit right).
+        # For intuitive VR-like control:
+        #   drag right → see right side → robot pan negative (turn right)
+        # Viewer pitch increases when dragging down (orbit below).
+        #   drag up → pitch decreases → delta_pitch < 0 → robot tilt positive (look up)
+        pan = float(np.clip(np.radians(-delta_yaw), -0.523, 0.523))
+        tilt = float(np.clip(np.radians(-delta_pitch), -0.35, 1.57))
+
+        self._camera.set_orientation(pan, tilt)
 
     # ── Drawing helpers ──
 
@@ -293,6 +354,7 @@ class PointCloudViewer:
             self._cam_yaw += dx * 0.3
             self._cam_pitch += dy * 0.3
             self._cam_pitch = max(-89.0, min(89.0, self._cam_pitch))
+            self._sync_camera_orientation()
 
         if self._right_pressed:
             # Pan: move target in screen-aligned plane

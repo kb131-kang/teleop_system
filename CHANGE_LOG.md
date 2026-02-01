@@ -208,3 +208,73 @@ Environment note
 This environment is headless (no X11/Wayland display server), so the interactive GLFW viewer cannot open a window here. The demo_pointcloud_viewer.py script will work on any workstation with a display. For verification in this headless environment, verify_pointcloud_pipeline.py renders point cloud snapshots as 2D projections (top-down + side views) using Pillow and saves them as PNG files.
 
 Output images are in output/pc_verify/ -- the composite image shows RGB, depth, top-down point cloud, and side-view point cloud for each frame captured during the streaming pipeline test.
+
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+
+demo_pointcloud_viewer.py는 마스터 시스템이 아닙니다. 이 스크립트는 슬레이브+마스터가 하나의 프로세스에 합쳐진 올인원 데모입니다:
+
+
+demo_pointcloud_viewer.py (단일 프로세스)
+┌─────────────────────────────────────────────────┐
+│  MuJoCo 시뮬레이션 (슬레이브 역할)               │
+│    └→ SimCameraStream → RGB-D 생성               │
+│                                                   │
+│  SimulatedTracker + CameraController              │
+│    └→ HMD 시뮬레이션 → pan/tilt 제어              │
+│                                                   │
+│  PointCloudGenerator → PointCloudViewer           │
+│    └→ RGB-D를 직접 받아서 포인트클라우드 표시 (마스터 역할)  │
+│                                                   │
+│  ※ 네트워크 통신 없음 — 모두 같은 프로세스 내 메모리 전달   │
+└─────────────────────────────────────────────────┘
+그래서 demo_rgbd_streaming.py 없이도 화면을 볼 수 있습니다. RGB-D 데이터가 네트워크를 거치지 않고 메모리에서 직접 전달되기 때문입니다.
+
+demo_rgbd_streaming.py는 실제 무선통신 시나리오를 위한 것입니다:
+
+
+--mode server (슬레이브/로봇 측)        --mode client (마스터/오퍼레이터 측)
+┌──────────────────────┐              ┌──────────────────────┐
+│ MuJoCo 시뮬레이션     │              │ RGBDStreamClient     │
+│   └→ SimCameraStream │              │   (ICameraStream)    │
+│        │             │              │        │             │
+│ RGBDStreamServer     │── TCP/무선 ──→│ PointCloudGenerator  │
+│  (JPEG+lz4 압축)     │              │   └→ PointCloudViewer│
+│  (pan/tilt 역방향 수신)│←─ TCP/무선 ──│  (마우스→pan/tilt전송)│
+└──────────────────────┘              └──────────────────────┘
+--mode local은 두 개를 같은 프로세스에서 localhost TCP로 연결해 테스트하는 모드입니다.
+
+정리하면:
+
+스크립트	역할	네트워크 사용
+demo_pointcloud_viewer.py	올인원 데모 (시뮬+뷰어 한 프로세스)	없음
+demo_rgbd_streaming.py --mode server	슬레이브 (RGB-D 송신)	TCP 서버
+demo_rgbd_streaming.py --mode client	마스터 (RGB-D 수신 + 뷰어)	TCP 클라이언트
+demo_rgbd_streaming.py --mode local	서버+클라이언트 한 프로세스 (테스트용)	localhost TCP
+실제 HW 배포 시에는 로봇에서 --mode server, 오퍼레이터 PC에서 --mode client --host <로봇IP> 를 실행하게 됩니다.
+
+
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+
+
+The EGL threading bug is fixed. Here's a summary of the changes:
+
+Root cause: RGBDStreamServer._server_loop() ran in a background thread and called self._camera.get_rgbd(), which invokes MuJoCo's EGL renderer. EGL contexts are thread-local, so rendering from a different thread than the one that created the context causes EGL_BAD_ACCESS.
+
+Fix — 3 files changed:
+
+rgbd_streaming.py — Restructured RGBDStreamServer:
+
+Added capture() method that must be called from the main thread. It captures a frame from the camera, encodes it, and stores the bytes in a thread-safe buffer (_encoded_frame + _frame_event).
+Changed _server_loop() background thread to only handle TCP accept/send. It waits on _frame_event for new encoded data instead of calling camera.get_rgbd() directly.
+demo_rgbd_streaming.py — Updated both run_server() and run_local():
+
+run_server(): Calls server.capture() at stream FPS from the main physics loop.
+run_local(): Calls server.capture() from the main loop alongside viewer updates.
+test_rgbd_streaming.py — Updated integration tests:
+
+Added _run_capture_loop() helper and _start_capture() method to pump server.capture() from a test thread (safe since MockCameraStream has no EGL dependency).
+All 179 tests pass.
