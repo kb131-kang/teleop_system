@@ -1,0 +1,37 @@
+# CMU BVH skeleton joint → TrackerRole mapping
+# CMU skeleton (31 joints): Hips, LHipJoint, LeftUpLeg, LeftLeg, LeftFoot,
+#   LeftToeBase, RHipJoint, RightUpLeg, RightLeg, RightFoot, RightToeBase,
+#   LowerBack, Spine, Spine1, Neck, Neck1, Head, LeftShoulder, LeftArm,
+#   LeftForeArm, LeftHand, LeftFingerBase, LeftHandIndex1, LThumb,
+#   RightShoulder, RightArm, RightForeArm, RightHand, RightFingerBase,
+#   RightHandIndex1, RThumb
+
+joint_mapping:
+  right_hand: RightHand
+  left_hand: LeftHand
+  waist: Hips
+  right_foot: RightFoot
+  left_foot: LeftFoot
+  head: Head
+
+# Coordinate conversion settings for CMU BVH data
+coordinate_transform:
+  # CMU BVH uses Y-up coordinate system
+  # Axis mapping: BVH (X=lateral, Y=up, Z=forward) → ROS2 (X=fwd, Y=left, Z=up)
+  # Conversion: ros2_pos = (bvh_z, bvh_x, bvh_y) * scale
+  source_up: Y
+  target_up: Z
+
+  # Scale factor: BVH custom units → meters
+  # CMU BVH units vary per subject. 0.056 makes typical subject ~1.7m tall.
+  scale: 0.056
+
+# Robot workspace reference positions (ROS2 frame, meters)
+# Used for 'relative' normalize_mode — first frame aligns to these
+robot_reference:
+  right_hand: [0.4, -0.3, 1.0]
+  left_hand: [0.4, 0.3, 1.0]
+  waist: [0.0, 0.0, 0.9]
+  right_foot: [0.0, -0.15, 0.05]
+  left_foot: [0.0, 0.15, 0.05]
+  head: [0.0, 0.0, 1.6]

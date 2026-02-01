@@ -12,6 +12,7 @@
 8. [ROS2 Patterns](#8-ros2-patterns)
 9. [Testing](#9-testing)
 10. [Hardware Integration](#10-hardware-integration)
+11. [Motion Capture Replay Pipeline](#11-motion-capture-replay-pipeline)
 
 ---
 
@@ -668,6 +669,39 @@ MuJoCo Bridge moves head actuators (ctrl[22:23])
 
 The `ROS2RGBDSubscriber` implements `ICameraStream`, making it a drop-in replacement for `SimCameraStream` in the streaming server. See `teleop_system/modules/camera/ros2_rgbd_subscriber.py`.
 
+### Why ROS2 Internally + TCP Externally (Transport Layer Design)
+
+The camera streaming uses a **two-layer transport** pattern: ROS2 (DDS) for intra-machine communication, TCP for cross-machine streaming. This is a standard robotics pattern (used by `rosbridge_suite`, Foxglove Bridge, etc.) driven by the limitations of each transport:
+
+**Why not ROS2-only for cross-machine?**
+
+| Problem | Impact |
+|---------|--------|
+| No built-in compression | `sensor_msgs/Image` transmits raw pixels. 640×480 RGB @ 30fps = **~27 MB/s** uncompressed. WiFi saturates quickly |
+| DDS discovery overhead | Multicast-based discovery doesn't traverse subnets without explicit DDS configuration (XML profiles, discovery servers) |
+| NAT / firewall issues | DDS uses dynamic UDP ports. Corporate/cloud firewalls block this by default |
+
+The TCP streaming layer solves these: JPEG + lz4 compression reduces bandwidth to **~250 KB/frame** (~8× reduction), and a single TCP socket simplifies firewall/NAT traversal.
+
+**Why not TCP-only for everything?**
+
+| Benefit of keeping ROS2 internally | Details |
+|-------------------------------------|---------|
+| Standard tooling | `rviz2`, `rqt_image_view`, `ros2 topic echo` can inspect camera data without custom code |
+| Multiple subscribers | The same `/slave/camera/*` topics can be consumed by `ros2-viewer`, `ros2-server`, and `rviz2` simultaneously |
+| Shared-memory transport | DDS on the same machine can use zero-copy shared memory, faster than TCP loopback |
+| Ecosystem compatibility | Any ROS2 camera processing node (`image_proc`, `depth_image_proc`, SLAM) works out of the box |
+
+**Summary of the layered approach:**
+
+```
+Same machine:   Bridge ──ROS2 topics──→ ros2-viewer      (direct, no bridge needed)
+Cross machine:  Bridge ──ROS2 topics──→ ros2-server ──TCP──→ client
+                         (internal bus)    (external transport, compressed)
+```
+
+This pattern is common in production robotics: Boston Dynamics Spot uses gRPC externally, surgical robots use dedicated video protocols externally, and autonomous vehicles use MQTT/gRPC for cloud connectivity — all while using ROS2 or similar middleware internally.
+
 ### EGL Thread Safety
 
 MuJoCo's EGL rendering contexts are thread-local. The bridge uses a single-threaded executor, so all timer callbacks (physics, publishing, camera) run on the same thread. This is safe because the EGL context is created on the main thread and all rendering happens there.
@@ -849,3 +883,74 @@ Per finger:   [MCP_flex, MCP_abd, PIP_flex, DIP_flex]
 ```
 
 The `retargeting.py` module maps these 20 angles to the DG-5F hand's 20 DOF via configurable scale factors and offsets (see `config/teleop/hand.yaml`).
+
+---
+
+## 11. Motion Capture Replay Pipeline
+
+### Overview
+
+The `teleop_system/mocap/` package provides a BVH motion capture replay pipeline for testing the teleop system with real human motion data instead of synthetic sinusoidal inputs.
+
+### Architecture
+
+```
+BVH File (CMU, Y-up, custom units)
+    |  bvh_loader.py (bvhio parse + coordinate convert)
+    v
+BVHData (ROS2 Z-up, meters, xyzw quaternion)
+    |  skeleton_mapper.py (joint → TrackerRole mapping)
+    v
+MappedMotion (per-frame Pose6D for 6 tracker roles)
+    |  bvh_tracker_adapter.py / bvh_hand_adapter.py
+    v
+IMasterTracker / IHandInput interfaces
+    |  bvh_replay_publisher.py (ROS2 topics)
+    v
+Standard teleop nodes (arm_teleop, locomotion, hand_teleop)
+```
+
+### Coordinate Conversion
+
+CMU BVH files use Y-up coordinates with custom units. Conversion to ROS2:
+
+| BVH Axis | Direction | ROS2 Axis | Direction |
+|----------|-----------|-----------|-----------|
+| X | Lateral (left+) | Y | Left+ |
+| Y | Up | Z | Up |
+| Z | Forward | X | Forward |
+
+Position: `ros2 = (bvh_z, bvh_x, bvh_y) * scale`
+
+Quaternion (glm w,x,y,z → ROS2 x,y,z,w): `ros2 = (bvh_z, bvh_x, bvh_y, bvh_w)`
+
+### Key Classes
+
+| Class | File | Interface | Purpose |
+|-------|------|-----------|---------|
+| `BVHData` | `bvh_loader.py` | Dataclass | Parsed BVH frames in ROS2 coordinates |
+| `SkeletonMapper` | `skeleton_mapper.py` | — | Maps BVH joints to TrackerRole Pose6D |
+| `BVHTrackerAdapter` | `bvh_tracker_adapter.py` | `IMasterTracker` | Time-indexed BVH playback |
+| `BVHHandAdapter` | `bvh_hand_adapter.py` | `IHandInput` | Finger motion from wrist angular velocity |
+| `BVHReplayPub` | `bvh_replay_publisher.py` | ROS2 `Node` | Publishes BVH data on standard topics |
+| `DataRecorder` | `data_recorder.py` | — | Records input/output to `.npz` |
+
+### Normalization Modes
+
+- **`relative`** (default): First frame aligns to robot reference positions (`SimulatedTracker` defaults). Motion deltas are preserved. Best for testing with the robot's workspace.
+- **`absolute`**: Raw converted positions. Useful for analyzing BVH data directly.
+
+### Adding Support for New BVH Datasets
+
+1. Create a joint mapping YAML in `config/mocap/` (like `cmu_joint_mapping.yaml`)
+2. Map your skeleton's joint names to the 6 TrackerRole joints
+3. Set the appropriate `scale` factor (BVH units → meters)
+4. If the BVH uses a different up-axis, modify the coordinate conversion in `bvh_loader.py`
+
+### Metrics
+
+The `metrics.py` module provides:
+- **Tracking error**: Position/orientation RMSE between input and output
+- **Velocity saturation**: % of frames where velocity hits limits
+- **Workspace utilization**: Motion range coverage
+- **Smoothness**: Dimensionless jerk metric (lower = smoother)

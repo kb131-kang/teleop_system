@@ -198,7 +198,7 @@ class TestControlPanelModel:
 
         panel.set_parameter_callback("position_scale", on_change)
         # Simulate parameter change via internal call
-        panel._parameter_change_callback(None, 2.5, "position_scale")
+        panel._parameter_change_cb(None, 2.5, "position_scale")
         assert received["value"] == 2.5
         assert panel.get_parameter("position_scale") == 2.5
 
@@ -213,5 +213,5 @@ class TestControlPanelModel:
         panel = ControlPanel()
         panel.add_module("TestModule", on_toggle=on_toggle)
         # Simulate toggle via internal call
-        panel._module_toggle_callback(None, True, "TestModule")
+        panel._module_toggle_cb(None, True, "TestModule")
         assert toggled["state"] is True

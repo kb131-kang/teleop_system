@@ -52,7 +52,28 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "launch_viewer", default_value="false",
-            description="Launch ROS2 RGB-D point cloud viewer (first-person camera)",
+            description="Launch RGB-D point cloud viewer (first-person camera)",
+        ),
+        DeclareLaunchArgument(
+            "viewer_mode", default_value="ros2-viewer",
+            description="Viewer mode: ros2-viewer (same machine, ROS2 topics) "
+                        "or client (cross-machine, TCP stream from slave)",
+        ),
+        DeclareLaunchArgument(
+            "viewer_host", default_value="localhost",
+            description="TCP streaming host for viewer_mode=client (slave IP address)",
+        ),
+        DeclareLaunchArgument(
+            "viewer_port", default_value="9876",
+            description="TCP streaming port for viewer_mode=client",
+        ),
+        DeclareLaunchArgument(
+            "launch_gui", default_value="true",
+            description="Launch GUI control panel",
+        ),
+        DeclareLaunchArgument(
+            "font_scale", default_value="0.0",
+            description="GUI font scale (0.0 = auto-detect from screen resolution)",
         ),
 
         # ── Dummy Tracker Publisher ──
@@ -144,12 +165,38 @@ def generate_launch_description():
             }],
         ),
 
+        # ── Calibration Node ──
+        Node(
+            package="teleop_system",
+            executable="calibration_node",
+            name="calibration_node",
+            output="screen",
+        ),
+
+        # ── Optional: GUI Control Panel ──
+        Node(
+            package="teleop_system",
+            executable="gui_control_panel",
+            name="gui_control_panel",
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("launch_gui")),
+            parameters=[{
+                "viewer_host": LaunchConfiguration("viewer_host"),
+                "viewer_port": LaunchConfiguration("viewer_port"),
+                "font_scale": LaunchConfiguration("font_scale"),
+            }],
+        ),
+
         # ── Optional: RGB-D Point Cloud Viewer ──
+        # viewer_mode: "ros2-viewer" for same-machine (ROS2 topics),
+        #              "client" for cross-machine (TCP stream from slave)
         ExecuteProcess(
             cmd=[
                 FindExecutable(name="python3"),
                 "-u", "scripts/demo_rgbd_streaming.py",
-                "--mode", "ros2-viewer",
+                "--mode", LaunchConfiguration("viewer_mode"),
+                "--host", LaunchConfiguration("viewer_host"),
+                "--port", LaunchConfiguration("viewer_port"),
             ],
             name="rgbd_viewer",
             output="screen",

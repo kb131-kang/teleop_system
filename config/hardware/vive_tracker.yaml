@@ -5,6 +5,19 @@ vive_tracker:
   steamvr:
     require_hmd: false  # Set false to use trackers without HMD
 
+  # Base station (Lighthouse) setup
+  # SteamVR manages base stations transparently — tracker poses are returned
+  # in the "standing universe" coordinate frame, independent of station count.
+  # Re-run SteamVR Room Setup if you add/remove/move base stations.
+  base_stations:
+    # Supported configurations:
+    #   2 stations — ~180° coverage (facing setup)
+    #   4 stations — ~360° coverage (room-scale, recommended)
+    #   More stations supported but diminishing returns
+    # No config changes needed when adding/removing stations;
+    # SteamVR calibrates automatically during Room Setup.
+    min_expected: 2  # Log warning if fewer connected
+
   # Tracker serial-to-role mapping
   # Update these with actual tracker serial numbers
   tracker_mapping:

@@ -11,7 +11,10 @@
 7. [ROS2 Topics Reference](#7-ros2-topics-reference)
 8. [Configuration](#8-configuration)
 9. [Standalone Testing (No ROS2)](#9-standalone-testing-no-ros2)
-10. [Troubleshooting](#10-troubleshooting)
+10. [Testing with Motion Capture Data](#10-testing-with-motion-capture-data)
+11. [GUI Control Panel](#11-gui-control-panel)
+12. [Tracker Calibration (A-Pose)](#12-tracker-calibration-a-pose)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -256,7 +259,55 @@ python3 scripts/launch_master.py --launch-viewer
 
 When `launch_viewer` is enabled, a point cloud viewer (`ros2-viewer` mode) launches alongside the master nodes. It subscribes to the slave's camera topics and displays the robot's first-person camera view. The view updates in real time as the robot's head moves.
 
-### 5.4 Individual Modules
+### 5.4 Master Only (BVH motion capture replay)
+
+Runs the master system using real BVH motion capture data instead of dummy sinusoidal inputs. Use this when testing the teleop pipeline against recorded human motion.
+
+```bash
+# ROS2 launch (bvh_file is required)
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh playback_speed:=0.5
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh launch_viewer:=true
+
+# With custom scale and normalization
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh scale:=0.065 normalize_mode:=absolute
+
+# Python script
+python3 scripts/launch_master_mocap.py --bvh data/bvh/cmu/002/02_01.bvh
+python3 scripts/launch_master_mocap.py --bvh data/bvh/cmu/002/02_01.bvh --playback-speed 0.5 --launch-viewer
+python3 scripts/launch_master_mocap.py --bvh data/bvh/cmu/002/02_01.bvh --no-loop
+```
+
+The BVH replay publisher replaces all three dummy publishers (tracker, glove, HMD) and publishes the same topics with the same message types. All downstream teleop nodes (arm, locomotion, hand, camera) work identically.
+
+**Staged start (default behavior):**
+
+By default, the BVH publisher starts in **READY** state: it publishes the initial frame (frame 0) repeatedly so the robot aligns to the starting pose before motion begins. This mimics the real hardware workflow:
+
+1. Launch → robot moves to the BVH initial pose (READY state)
+2. Verify alignment in GUI (Tracker View tab) or MuJoCo viewer
+3. Press **Start Playback** in GUI, or call the service:
+   ```bash
+   ros2 service call /teleop/start_playback std_srvs/srv/Trigger
+   ```
+4. Motion playback begins (PLAYING state)
+
+To skip this and start immediately:
+```bash
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh auto_start:=true
+python3 scripts/launch_master_mocap.py --bvh data/bvh/cmu/002/02_01.bvh --auto-start
+```
+
+**Cross-machine testing with mocap data:**
+```bash
+# Machine A (slave): MuJoCo simulation
+ros2 launch teleop_system slave_mujoco.launch.py launch_viewer:=true
+
+# Machine B (master): BVH replay
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/walking.bvh
+```
+
+### 5.5 Individual Modules
 
 ```bash
 # Arm teleop only (with dummy tracker)
@@ -266,7 +317,7 @@ ros2 launch teleop_system arm_only.launch.py
 ros2 launch teleop_system hand_only.launch.py
 ```
 
-### 5.5 Hardware Mode (real robot + real VR)
+### 5.6 Hardware Mode (real robot + real VR)
 
 ```bash
 # Full hardware system
@@ -276,7 +327,38 @@ ros2 launch teleop_system teleop_full.launch.py robot_ip:=192.168.0.100
 python3 scripts/run_teleop.py --mode hardware
 ```
 
-### 5.6 Mixed Mode (selective modules)
+#### Vive Tracker Base Station Setup
+
+SteamVR base stations (Lighthouses) provide the tracking reference for Vive Trackers. **SteamVR manages base stations transparently** — tracker poses are returned in a unified "standing universe" coordinate frame regardless of how many base stations are connected or where they are placed.
+
+**Station configurations:**
+
+| Stations | Coverage | Use Case |
+|----------|----------|----------|
+| 2 | ~180° (facing) | Desk or forward-facing setup |
+| 4 | ~360° (room-scale) | Full room coverage (recommended) |
+| 4+ | ~360° (redundant) | Large rooms, reduce occlusion |
+
+**Key constraints:**
+
+- **SteamVR Room Setup is required** after adding, removing, or moving base stations. This recalibrates the coordinate origin and play area.
+- **Coordinate consistency**: Within a single Room Setup session, tracker positions are consistent regardless of station count. Changing station layout without re-running Room Setup may cause coordinate drift.
+- **Occlusion**: With 2 stations, turning 180° can lose line-of-sight tracking. With 4 stations at room corners, full-body tracking is maintained from any orientation.
+- **Station stability**: Base stations must be mounted rigidly. Vibration or movement causes tracking jitter.
+- **No code changes needed**: Adding or removing stations requires only SteamVR Room Setup — no config or code changes in this system.
+
+The system logs discovered base stations on startup:
+```
+[INFO] Base station found: LHB-XXXXXXXX (idx=1, connected)
+[INFO] Base station found: LHB-YYYYYYYY (idx=2, connected)
+[INFO] Base stations: 2 found, 2 connected
+```
+
+If no base stations are detected, a warning is logged and tracker poses will be invalid.
+
+See `config/hardware/vive_tracker.yaml` for tracker serial mapping and auto-detect settings.
+
+### 5.7 Mixed Mode (selective modules)
 
 ```bash
 # Only arm and locomotion, no hand or camera
@@ -285,6 +367,105 @@ python3 scripts/run_teleop.py --modules arm locomotion --no-gui
 # Simulation mode with specific backend
 python3 scripts/run_teleop.py --mode simulation --sim-backend mujoco
 ```
+
+### 5.8 Cross-Machine Operation (Master/Slave on Separate PCs)
+
+The master and slave systems are designed to run **independently** on separate machines. Communication happens via ROS2 DDS middleware — no code changes needed. The only requirement is that both machines are on the same network and share the same `ROS_DOMAIN_ID`.
+
+**Architecture:**
+
+```
+┌─────────────────────────────────┐         ROS2 DDS (UDP multicast)         ┌───────────────────────────────┐
+│   Master PC (Server)            │ ◄─────────────────────────────────────►  │   Slave PC (Robot userPC)     │
+│                                 │                                          │                               │
+│   Vive Trackers / Manus Gloves  │   publishes:                             │   MuJoCo Simulation           │
+│   (or BVH replay / dummy)      │     /master/tracker/*                    │     or Real RB-Y1 Robot       │
+│                                 │     /master/hand/*/joints               │                               │
+│   Teleop Modules:               │     /master/hmd/orientation             │   subscribes:                 │
+│     Arm, Locomotion, Hand, Cam  │     /slave/arm/*/joint_cmd              │     /slave/arm/*/joint_cmd    │
+│                                 │     /slave/base/cmd_vel                 │     /slave/base/cmd_vel       │
+│   GUI Control Panel             │     /slave/hand/*/joint_cmd             │     /slave/hand/*/joint_cmd   │
+│   Calibration Node              │                                          │                               │
+│                                 │   subscribes:                            │   publishes:                  │
+│                                 │     /mujoco/joint_states                │     /mujoco/joint_states      │
+└─────────────────────────────────┘     /slave/camera/*                     └───────────────────────────────┘
+```
+
+**Setup steps:**
+
+```bash
+# ── On both machines ──
+# Ensure same ROS_DOMAIN_ID (default: 0)
+export ROS_DOMAIN_ID=0
+
+# Source ROS2 and workspace
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+```
+
+```bash
+# ── Slave PC (robot userPC) ──
+# Start MuJoCo simulation (or real robot driver)
+ros2 launch teleop_system slave_mujoco.launch.py launch_viewer:=true
+
+# With camera publishing + TCP streaming for remote viewer
+ros2 launch teleop_system slave_mujoco.launch.py \
+    launch_viewer:=true publish_camera:=true launch_streaming:=true
+```
+
+```bash
+# ── Master PC (server with teleop hardware) ──
+# Option A: Simulated inputs (testing)
+ros2 launch teleop_system master_sim.launch.py
+
+# Option B: BVH motion capture replay
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh
+
+# Option C: Real VR hardware (Vive Trackers + Manus Gloves)
+# (When hardware driver launch file is available)
+python3 scripts/launch_master.py
+
+# All options support GUI by default. To disable:
+ros2 launch teleop_system master_sim.launch.py launch_gui:=false
+```
+
+**First-person camera viewer (cross-machine TCP mode):**
+
+When running master and slave on separate machines, the RGB-D viewer needs TCP streaming instead of ROS2 topics. The slave runs the TCP stream server, and the master connects as a TCP client:
+
+```bash
+# Slave: enable camera + TCP streaming
+ros2 launch teleop_system slave_mujoco.launch.py \
+    publish_camera:=true launch_streaming:=true
+
+# Master: launch with TCP viewer pointing to slave IP
+ros2 launch teleop_system master_mocap.launch.py \
+    bvh_file:=/path/to/file.bvh \
+    launch_viewer:=true viewer_mode:=client viewer_host:=192.168.0.100
+
+# Or with Python scripts:
+python3 scripts/launch_master_mocap.py \
+    --bvh data/bvh/cmu/002/02_01.bvh \
+    --launch-viewer --viewer-mode client --viewer-host 192.168.0.100
+```
+
+You can also launch the TCP viewer from the GUI: click **Viewer (TCP)** and enter the slave IP in the input field.
+
+**Launcher summary:**
+
+| Launcher | Side | What It Runs |
+|----------|------|-------------|
+| `teleop_sim_full.launch.py` | Both | Full system on one machine (master + slave combined) |
+| `master_sim.launch.py` | Master | Dummy inputs + teleop nodes + calibration + GUI |
+| `master_mocap.launch.py` | Master | BVH replay + teleop nodes + calibration + GUI |
+| `slave_mujoco.launch.py` | Slave | MuJoCo physics + joint state publishing + optional camera |
+
+**Network configuration notes:**
+
+- ROS2 DDS uses UDP multicast by default; both machines must allow multicast traffic
+- If multicast is blocked (e.g. corporate network), configure DDS for unicast discovery — set `FASTDDS_DEFAULT_PROFILES_FILE` or configure CycloneDDS with peer addresses
+- Verify connectivity: run `ros2 topic list` on both machines and confirm shared topics appear
+- Firewall: allow UDP ports 7400-7500 (DDS discovery) and ephemeral ports
 
 ---
 
@@ -349,7 +530,7 @@ For environments where all nodes run on the same machine and ROS2 transport is p
 
 **Enable camera publishing on the MuJoCo bridge:**
 ```bash
-ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true camera_fps:=30
+ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true camera_fps:=30.0
 ```
 
 **View the camera output:**
@@ -549,7 +730,200 @@ python3 -m pytest tests/test_transforms.py::TestQuaternionOperations::test_multi
 
 ---
 
-## 10. Troubleshooting
+## 10. Testing with Motion Capture Data
+
+The system includes a BVH motion capture replay pipeline that replaces dummy sinusoidal inputs with real human motion data from the CMU Motion Capture Database.
+
+### 10.1 Install Dependencies
+
+```bash
+pip install bvhio 'matplotlib>=3.9.0'
+```
+
+> **Note:** matplotlib >= 3.9.0 is required for compatibility with NumPy 2.x.
+> Older versions (e.g. system apt matplotlib 3.6.x) will crash with `RuntimeError` in `mpl_toolkits`.
+
+### 10.2 Download Motion Data
+
+```bash
+# Download recommended files (walking + arm reaching)
+python3 scripts/download_cmu_bvh.py
+
+# Download all recommended categories
+python3 scripts/download_cmu_bvh.py --all
+
+# Download specific category
+python3 scripts/download_cmu_bvh.py --category walking
+```
+
+Downloaded files are saved to `data/bvh/cmu/`.
+
+### 10.3 Standalone Replay (No ROS2)
+
+```bash
+# Replay BVH data and generate metrics
+python3 scripts/run_mocap_replay.py --bvh data/bvh/cmu/002/02_01.bvh
+
+# With skeleton viewer
+python3 scripts/run_mocap_replay.py --bvh data/bvh/cmu/002/02_01.bvh --view
+
+# With dual viewer (skeleton + tracker positions)
+python3 scripts/run_mocap_replay.py --bvh data/bvh/cmu/002/02_01.bvh --dual-view
+
+# Save metrics report
+python3 scripts/run_mocap_replay.py --bvh data/bvh/cmu/002/02_01.bvh --output report.json
+```
+
+### 10.4 ROS2 Replay
+
+```bash
+# Launch BVH replay with teleop nodes (replaces dummy publishers)
+ros2 launch teleop_system mocap_replay.launch.py bvh_file:=/absolute/path/to/file.bvh
+
+# With MuJoCo visualization
+ros2 launch teleop_system mocap_replay.launch.py \
+    bvh_file:=/absolute/path/to/file.bvh \
+    launch_bridge:=true
+
+# Custom playback speed and no loop
+ros2 launch teleop_system mocap_replay.launch.py \
+    bvh_file:=/absolute/path/to/file.bvh \
+    playback_speed:=0.5 \
+    loop:=false
+```
+
+### 10.5 Parameter Sweep
+
+```bash
+# Sweep scale factors to find optimal BVH→robot mapping
+python3 scripts/run_parameter_sweep.py --bvh data/bvh/cmu/002/02_01.bvh
+
+# Custom scale range
+python3 scripts/run_parameter_sweep.py --bvh data/bvh/cmu/002/02_01.bvh \
+    --scales 0.04 0.05 0.056 0.065 0.075
+
+# Save results
+python3 scripts/run_parameter_sweep.py --bvh data/bvh/cmu/002/02_01.bvh --output sweep.json
+```
+
+### 10.6 Available Motion Data
+
+| Category | File | Description |
+|----------|------|-------------|
+| Walking | `002/02_01.bvh` | Normal walking |
+| Walking | `007/07_01.bvh` | Walking |
+| Arm Reaching | `049/49_02.bvh` | Arm movements |
+| Full Body | `086/86_02.bvh` | Complex full-body motion |
+
+---
+
+## 11. GUI Control Panel
+
+The GUI control panel is a Dear PyGui-based ROS2 node that provides real-time monitoring and control.
+
+### Launching
+
+The GUI launches automatically with the master system:
+
+```bash
+# Launches with GUI by default
+ros2 launch teleop_system teleop_sim_full.launch.py
+
+# Disable GUI
+ros2 launch teleop_system teleop_sim_full.launch.py launch_gui:=false
+
+# Python script launcher
+python3 scripts/launch_master.py           # GUI enabled by default
+python3 scripts/launch_master.py --no-gui  # Disable GUI
+```
+
+### Tab Layout
+
+**Status Tab**
+- Module status indicators (green=active, yellow=connected but disabled, red=disconnected)
+- System mode selection (Simulation/Hardware)
+- Playback state (READY=yellow, PLAYING=green) — shown when BVH replay is active
+- Calibration status with progress bar
+- Action buttons: Start Playback, Calibrate, RGB-D Viewer, Emergency Stop, Record
+
+**Tracker View Tab**
+- Two scatter plots: Top-Down (X-Y) and Side (X-Z) views
+- 6 color-coded tracker positions updated at 10Hz
+- Color legend: right_hand=red, left_hand=blue, waist=green, feet=orange, head=purple
+
+**Joint States Tab**
+- Rolling time series plots (~5s window) for:
+  - Left arm joints (7 DoF)
+  - Right arm joints (7 DoF)
+  - Torso joints (6 DoF)
+
+**Parameters Tab**
+- Real-time parameter sliders: position_scale, orientation_scale, max_joint_velocity, ik_posture_cost, hand_smoothing, locomotion_deadzone
+
+### Action Buttons
+
+| Button | Action |
+|--------|--------|
+| Start Playback | Starts BVH motion playback (enabled when BVH publisher is in READY state) |
+| Calibrate (A-Pose) | Triggers tracker calibration (see Section 12) |
+| Viewer (ROS2) | Launches point cloud viewer subscribing to ROS2 camera topics (same machine) |
+| EMERGENCY STOP | Publishes zero commands to all arm + base topics |
+| Record | Toggles data recording (placeholder for future) |
+| Viewer (TCP) | Launches TCP client viewer connecting to slave streaming server (cross-machine). Enter slave IP and port in the input fields next to the button. |
+
+---
+
+## 12. Tracker Calibration (A-Pose)
+
+The calibration system aligns tracker coordinate frames with the robot's reference positions using an A-Pose.
+
+### How It Works
+
+1. Operator wears trackers and stands in A-Pose (arms ~45 degrees from body, feet shoulder-width apart)
+2. Press "Calibrate" button in GUI (or call `/teleop/calibrate` ROS2 service)
+3. 3-second countdown (WAITING state)
+4. 1-second pose capture (CAPTURING state — ~100 samples per tracker)
+5. System computes mean position per tracker and calculates offsets:
+   `offset = robot_reference_position - mean(captured_positions)`
+6. Offsets published on `/calibration/offsets` topic (transient local QoS)
+7. All tracker publishers automatically apply offsets before publishing
+
+### Configuration
+
+Edit `config/calibration/a_pose_reference.yaml` to adjust reference positions:
+
+```yaml
+a_pose_reference:
+  right_hand: [0.25, -0.35, 0.85]   # meters, ROS2 Z-up frame
+  left_hand: [-0.25, -0.35, 0.85]
+  waist: [0.0, 0.0, 0.95]
+  right_foot: [0.15, 0.0, 0.0]
+  left_foot: [-0.15, 0.0, 0.0]
+  head: [0.0, 0.0, 1.55]
+
+calibration:
+  countdown_sec: 3.0
+  capture_duration_sec: 1.0
+```
+
+### ROS2 Interface
+
+| Topic/Service | Type | Description |
+|---------------|------|-------------|
+| `/teleop/calibrate` | `std_srvs/Trigger` | Start calibration (service) |
+| `/calibration/state` | `std_msgs/String` | JSON: state, progress, countdown, error |
+| `/calibration/offsets` | `std_msgs/String` | JSON: position offsets per role (transient local) |
+
+### Programmatic Trigger
+
+```bash
+# Via ROS2 CLI
+ros2 service call /teleop/calibrate std_srvs/srv/Trigger
+```
+
+---
+
+## 13. Troubleshooting
 
 ### EGL / MuJoCo Rendering Errors
 

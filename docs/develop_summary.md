@@ -4,7 +4,210 @@ This document tracks development progress for the RB-Y1 teleoperation system. Ea
 
 ---
 
-## 2025-02-01 — Bug Fixes, ros2-server Mode, Auto-Launch Features, Documentation
+## 2026-02-01 (Session 4) — GUI Control Panel + Tracker Calibration
+
+### Summary
+
+Implemented a full-featured ROS2 Node-based GUI control panel with Dear PyGui (4 tabs: Status, Tracker 3D View, Joint State Plots, Parameters), an A-Pose tracker calibration system, and updated the TRD.md architecture diagram to reflect all current modules.
+
+### New Files
+
+| File | Description |
+|------|-------------|
+| `teleop_system/calibration/__init__.py` | Calibration package init |
+| `teleop_system/calibration/pose_calibrator.py` | A-Pose calibration state machine with offset computation |
+| `teleop_system/calibration/calibration_node.py` | ROS2 node: `/teleop/calibrate` service + state/offset publishers |
+| `config/calibration/a_pose_reference.yaml` | Robot A-Pose reference positions (6 trackers) |
+| `teleop_system/gui/gui_node.py` | ROS2 node wrapping ControlPanel with topic subscriptions |
+| `tests/test_calibration.py` | 21 unit tests for calibration state machine |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `teleop_system/gui/control_panel.py` | Rewritten: 4-tab layout (Status/Tracker/Joints/Params), calibration UI, action buttons, scatter plots, time series |
+| `teleop_system/utils/ros2_helpers.py` | Added `CALIBRATION_STATE`, `CALIBRATION_OFFSETS` topic names |
+| `teleop_system/simulators/dummy_tracker_pub.py` | Added `/calibration/offsets` subscription + offset application |
+| `teleop_system/mocap/bvh_replay_publisher.py` | Added `/calibration/offsets` subscription + offset application |
+| `teleop_system/devices/vive_tracker_pub.py` | Added `/calibration/offsets` subscription + offset application |
+| `launch/master_sim.launch.py` | Added `launch_gui` arg, calibration_node, gui_control_panel |
+| `launch/master_mocap.launch.py` | Added `launch_gui` arg, calibration_node, gui_control_panel |
+| `launch/teleop_sim_full.launch.py` | Added `launch_gui` arg pass-through |
+| `scripts/launch_master.py` | Added `--no-gui` flag, calibration_node, GUI subprocess |
+| `scripts/launch_master_mocap.py` | Added `--no-gui` flag, calibration_node, GUI subprocess |
+| `setup.py` | Added `gui_control_panel` and `calibration_node` entry points + calibration config data_files |
+| `docs/TRD.md` | Updated Section 3.1 architecture diagram + Section 4 directory structure |
+| `tests/test_phase5_camera_gui.py` | Fixed renamed callback method references |
+
+### Architecture
+
+```
+Calibration Flow:
+  GUI "Calibrate" button
+    → /teleop/calibrate (std_srvs/Trigger)
+    → CalibrationNode starts PoseCalibrator state machine
+    → WAITING (3s countdown) → CAPTURING (1s) → COMPUTING → CALIBRATED
+    → Publishes offsets as JSON on /calibration/offsets (transient local)
+    → Tracker publishers apply offsets before publishing
+```
+
+```
+GUI Threading Model:
+  Main Thread:  DearPyGui render loop (setup → render_frame loop → shutdown)
+  Background:   ROS2 MultiThreadedExecutor.spin()
+  Sync:         threading.Lock on shared data buffers (TrackerData, JointStateData)
+```
+
+### Test Results
+
+- 21 new calibration tests: **all pass**
+- Existing GUI tests: **all pass** (callback rename fixed)
+- Full suite regression: **all pass**
+
+---
+
+## 2026-02-01 (Session 3) — Mocap Master Launcher & Colcon Debug Fix
+
+### Summary
+
+Created a dedicated master system launcher that uses BVH motion capture replay data instead of dummy sinusoidal inputs. This enables cross-machine testing with real human motion: run the mocap master on one PC and the MuJoCo slave on another.
+
+Also fixed a stale colcon build issue causing `ImportError: bvhio` when running `run_mocap_replay.py --view`.
+
+### Bug Fix
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| `run_mocap_replay.py --view` fails with `ImportError: bvhio` | Stale colcon build at `ros2_ws/build/teleop_system/` on PYTHONPATH shadows source tree | Rebuilt with `colcon build --packages-select teleop_system --symlink-install` |
+
+### New Files
+
+| File | Description |
+|------|-------------|
+| `launch/master_mocap.launch.py` | ROS2 launch: BVH replay publisher + all teleop nodes + optional viewer |
+| `scripts/launch_master_mocap.py` | Python script launcher for mocap master (no `ros2 launch` needed) |
+
+### Architecture
+
+```
+master_mocap.launch.py / launch_master_mocap.py
+    ├── BVH Replay Publisher (replaces dummy_tracker_pub + dummy_glove_pub + dummy_hmd_pub)
+    │     publishes: /master/tracker/*, /master/hand/*, /master/hmd/orientation
+    ├── Arm Teleop Node
+    ├── Locomotion Node
+    ├── Hand Teleop Node
+    ├── Camera Teleop Node
+    └── (Optional) RGB-D Viewer
+```
+
+### Usage
+
+```bash
+# ROS2 launch
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/file.bvh playback_speed:=0.5 launch_viewer:=true
+
+# Python script
+python3 scripts/launch_master_mocap.py --bvh data/bvh/cmu/002/02_01.bvh
+python3 scripts/launch_master_mocap.py --bvh data/bvh/cmu/002/02_01.bvh --playback-speed 0.5 --launch-viewer
+
+# Cross-machine: slave on Machine A, mocap master on Machine B
+# Machine A:
+ros2 launch teleop_system slave_mujoco.launch.py launch_viewer:=true
+# Machine B:
+ros2 launch teleop_system master_mocap.launch.py bvh_file:=/path/to/walking.bvh
+```
+
+### Test Results
+
+- **249/249 tests pass** (no regressions)
+
+---
+
+## 2025-02-01 (Session 2) — Motion Capture Dataset Replay Infrastructure
+
+### Summary
+
+Built a complete BVH motion capture replay and analysis pipeline to replace dummy sinusoidal inputs with real human motion data. This enables testing the teleop pipeline (arm IK, locomotion, hand retargeting) against recorded human motion.
+
+### New Package: `teleop_system/mocap/`
+
+| File | Description |
+|------|-------------|
+| `bvh_loader.py` | BVH file parser using `bvhio`, coordinate conversion (BVH Y-up → ROS2 Z-up) |
+| `skeleton_mapper.py` | Maps BVH skeleton joints to TrackerRole Pose6D (6 roles: hands, waist, feet, head) |
+| `bvh_tracker_adapter.py` | `BVHTrackerAdapter(IMasterTracker)` — time-indexed BVH playback, loop/pause/speed |
+| `bvh_hand_adapter.py` | `BVHHandAdapter(IHandInput)` — derives 20-joint finger motion from wrist angular velocity |
+| `bvh_replay_publisher.py` | ROS2 node publishing BVH data on tracker/hand/HMD topics (replaces dummy publishers) |
+| `data_recorder.py` | Records input/output channels to `.npz` for offline analysis |
+| `metrics.py` | Tracking error, velocity saturation, workspace utilization, smoothness (jerk) |
+| `skeleton_viewer.py` | Matplotlib 3D skeleton viewer with frame slider |
+| `dual_viewer.py` | Side-by-side human skeleton + tracker position viewer |
+
+### New Scripts
+
+| Script | Description |
+|--------|-------------|
+| `scripts/download_cmu_bvh.py` | Downloads CMU BVH files from GitHub (walking, arm reaching, full body) |
+| `scripts/run_mocap_replay.py` | Standalone BVH replay with metrics generation (no ROS2 needed) |
+| `scripts/run_parameter_sweep.py` | Iterates scale/tuning parameters, outputs comparison table |
+
+### Data Pipeline Architecture
+
+```
+BVH File (CMU, Y-up, custom units)
+    |  bvh_loader.py (bvhio parse + coordinate convert)
+    v
+BVHData (ROS2 Z-up, meters, xyzw quaternion)
+    |  skeleton_mapper.py (joint → TrackerRole mapping)
+    v
+MappedMotion (per-frame Pose6D for 6 tracker roles)
+    |  bvh_tracker_adapter.py / bvh_hand_adapter.py
+    v
+IMasterTracker / IHandInput interfaces
+    |  bvh_replay_publisher.py (ROS2 topics)
+    v
+Standard teleop nodes (arm_teleop, locomotion, hand_teleop)
+```
+
+### Configuration
+
+- `config/mocap/default.yaml` — playback settings (scale, speed, loop)
+- `config/mocap/cmu_joint_mapping.yaml` — CMU BVH joint names → TrackerRole
+
+### Coordinate Transform
+
+BVH (X=lateral, Y=up, Z=forward) → ROS2 (X=forward, Y=left, Z=up):
+- `ros2_pos = (bvh_z, bvh_x, bvh_y) * scale`
+- `ros2_quat_xyzw = (bvh_z, bvh_x, bvh_y, bvh_w)`
+- Default scale: 0.056 (CMU BVH → meters, hips at ~0.95m)
+
+### Test Results
+
+- **249/249 tests pass** (192 existing + 57 new mocap tests, no regressions)
+
+### Usage
+
+```bash
+# Download CMU BVH data
+python3 scripts/download_cmu_bvh.py
+
+# Standalone replay with metrics
+python3 scripts/run_mocap_replay.py --bvh data/bvh/cmu/002/02_01.bvh
+
+# Parameter sweep
+python3 scripts/run_parameter_sweep.py --bvh data/bvh/cmu/002/02_01.bvh
+
+# ROS2 replay (replaces dummy publishers with BVH data)
+ros2 launch teleop_system mocap_replay.launch.py bvh_file:=/path/to/file.bvh
+
+# With MuJoCo visualization
+ros2 launch teleop_system mocap_replay.launch.py bvh_file:=/path/to/file.bvh launch_bridge:=true
+```
+
+---
+
+## 2025-02-01 (Session 1) — Bug Fixes, ros2-server Mode, Auto-Launch Features, Documentation
 
 ### Issues Addressed
 

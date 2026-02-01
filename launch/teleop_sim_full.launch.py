@@ -49,6 +49,10 @@ def generate_launch_description():
             "tracker_frequency", default_value="0.3",
             description="Dummy tracker oscillation frequency (Hz)",
         ),
+        DeclareLaunchArgument(
+            "launch_gui", default_value="true",
+            description="Launch GUI control panel on master side",
+        ),
 
         # ── Slave system (MuJoCo simulation) ──
         IncludeLaunchDescription(
@@ -70,6 +74,7 @@ def generate_launch_description():
                 "tracker_amplitude": LaunchConfiguration("tracker_amplitude"),
                 "tracker_frequency": LaunchConfiguration("tracker_frequency"),
                 "launch_viewer": LaunchConfiguration("launch_camera_viewer"),
+                "launch_gui": LaunchConfiguration("launch_gui"),
             }.items(),
         ),
     ])

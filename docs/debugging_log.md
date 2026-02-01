@@ -1,0 +1,27 @@
+# Debugging Log
+
+This document tracks minor bug fixes, debugging sessions, and small corrections that don't warrant full entries in `develop_plan.md` / `develop_summary.md`. Entries are in reverse chronological order (newest first).
+
+Format: `[date] issue → cause → fix (files touched)`
+
+---
+
+## 2026-02-01
+
+- **Master launch viewer only supports ROS2 mode (no TCP for cross-machine)** — `launch_viewer:=true` in `master_sim.launch.py` / `master_mocap.launch.py` always launched `--mode ros2-viewer`, which subscribes to ROS2 camera topics. For cross-machine operation, the viewer needs TCP client mode to receive from the slave's streaming server. → Added `viewer_mode` (default: `ros2-viewer`), `viewer_host` (default: `localhost`), `viewer_port` (default: `9876`) launch arguments. When `viewer_mode:=client`, the viewer connects via TCP. Also added "Viewer (TCP)" button + host/port inputs to the GUI control panel, and `--viewer-mode`/`--viewer-host`/`--viewer-port` flags to Python scripts. (`launch/master_sim.launch.py`, `launch/master_mocap.launch.py`, `teleop_system/gui/control_panel.py`, `teleop_system/gui/gui_node.py`, `scripts/launch_master.py`, `scripts/launch_master_mocap.py`, `docs/user_guide.md`)
+
+- **GUI exit code -6 persists after error-message fix** — Even after improving error messages for missing Dear PyGui, the `gui_control_panel` node still crashed with `terminate called without an active exception` (SIGABRT, exit code -6). Root cause: the ROS2 executor spin thread (`threading.Thread(target=executor.spin, daemon=True)`) was still joinable when `rclpy.shutdown()` was called. The C++ `std::thread` destructor calls `std::terminate()` on a joinable thread. → Added `spin_thread.join(timeout=3.0)` after `executor.shutdown()` in both the error path (DPG not available) and normal shutdown path. (`teleop_system/gui/gui_node.py`)
+
+- **BVH replay starts immediately — no initial pose alignment** — Running `master_mocap.launch.py` caused BVH motion data to play instantly, with no time for the robot to align to the initial pose. → Implemented staged playback: added `auto_start` parameter (default: `false`) to `bvh_replay_publisher.py`. When `auto_start=false`, all tracker/hand adapters are paused at frame 0 (READY state), publishing the initial pose repeatedly. Call `/teleop/start_playback` service or press "Start Playback" in the GUI to begin advancing (PLAYING state). Added `pause()`/`resume()` to `BVHHandAdapter` (tracker adapter already had them). Added playback state topic `/playback/state` (JSON: `{state, progress}`) at 2Hz. (`teleop_system/mocap/bvh_replay_publisher.py`, `teleop_system/mocap/bvh_hand_adapter.py`, `teleop_system/gui/control_panel.py`, `teleop_system/gui/gui_node.py`, `teleop_system/utils/ros2_helpers.py`, `launch/master_mocap.launch.py`, `scripts/launch_master_mocap.py`, `docs/user_guide.md`)
+
+- **`camera_fps` parameter type mismatch (INTEGER vs DOUBLE)** — `declare_parameter("camera_fps", 15.0)` locks type to DOUBLE. Passing `camera_fps:=30` from launch CLI is parsed as INTEGER by ROS2, causing `ParameterTypeException`. → Added `ParameterDescriptor(dynamic_typing=True)` to all numeric/bool params in `mujoco_ros2_bridge.py` so ROS2 accepts int/double/string interchangeably. Existing `_get_float_param`/`_get_int_param`/`_get_bool_param` helpers handle conversion. Also updated docs to use `30.0` in examples. (`teleop_system/simulators/mujoco_ros2_bridge.py`, `launch/slave_mujoco.launch.py`, `docs/user_guide.md`)
+
+- **GUI node exit code -6 when Dear PyGui not installed** — `gui_control_panel` node crashed with SIGABRT when `dearpygui` was not installed. → Improved error messages to include install command (`pip install dearpygui>=2.1.1`), fixed executor shutdown order in error path. (`teleop_system/gui/gui_node.py`, `teleop_system/gui/control_panel.py`)
+
+- **MuJoCo model not found in colcon install tree** — Running with `colcon build` (without `--symlink-install`) puts `__file__` inside `ros2_ws/install/...`, so `Path(__file__).parent.parent.parent` doesn't reach the source root where `models/` lives. → Added CWD fallback path resolution and improved error message suggesting `--symlink-install`. (`teleop_system/simulators/mujoco_ros2_bridge.py`)
+
+- **matplotlib version requirement too low** — `setup.py` specified `matplotlib>=3.6.0` but matplotlib < 3.9.0 is incompatible with NumPy 2.x (crashes in `mpl_toolkits`). → Updated to `matplotlib>=3.9.0` in both `mocap` and `all` extras, updated `user_guide.md` Section 10.1. (`setup.py`, `docs/user_guide.md`)
+
+- **`run_mocap_replay.py --view` NumPy 2.x crash in matplotlib** — System apt matplotlib 3.6.3 (`/usr/lib/python3/dist-packages/`) was compiled against NumPy 1.x; incompatible with pip NumPy 2.3.5. Also `mpl_toolkits` from system path shadowed pip version, breaking Axes3D → Installed pip matplotlib 3.10.8 (`pip install --break-system-packages --force-reinstall --ignore-installed 'matplotlib>=3.9.0'`), renamed system `mpl_toolkits` and `.pth` file to `.bak` (no code change)
+
+- **`run_mocap_replay.py` / `run_parameter_sweep.py` ModuleNotFoundError: teleop_system** — Running `python3 scripts/run_mocap_replay.py` adds `scripts/` to `sys.path`, not the project root. `from teleop_system.mocap...` fails since the package is in the parent directory → Added `sys.path.insert(0, project_root)` at top of both scripts (`scripts/run_mocap_replay.py`, `scripts/run_parameter_sweep.py`)

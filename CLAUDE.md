@@ -158,7 +158,30 @@ Five modes in `scripts/demo_rgbd_streaming.py`:
 
 - `docs/user_guide.md` — End-user guide (installation, running modes, camera streaming, troubleshooting)
 - `docs/developer_guide.md` — Architecture, interfaces, adding modules, MuJoCo integration
-- `docs/develop_summary.md` — **Ongoing development log** (update after each session)
+- `docs/develop_plan.md` — **Ongoing development plan** (update at start of each task)
+- `docs/develop_summary.md` — **Ongoing development log** (update after each task)
+- `docs/debugging_log.md` — **Minor bug fixes and debugging notes** (lightweight log)
 - `docs/PRD.md` — Product Requirements Document
 - `docs/TRD.md` — Technical Requirements Document
 - `docs/Tasks.md` — Task tracking
+
+## Development Documentation Rules
+
+**IMPORTANT: On every development task, you MUST automatically update these two documents:**
+
+1. **`docs/develop_plan.md`** — Update at the **start** of a development task:
+   - Add a new section at the top (reverse chronological order) with date and task title
+   - Document the objective, planned components, planned files (with action: New/Modify), and implementation order
+   - After the task is complete, add a "Result" line linking to the corresponding `develop_summary.md` entry
+
+2. **`docs/develop_summary.md`** — Update at the **end** of a development task:
+   - Add a new section at the top (reverse chronological order) with date and task title
+   - Document: summary, new/modified files table, architecture diagrams (if applicable), configuration changes, test results, and usage examples
+
+These updates are **mandatory** for any task that involves new features, significant refactoring, or architectural changes. Do not wait for the user to ask — update both documents as part of the standard workflow.
+
+3. **`docs/debugging_log.md`** — For **minor fixes and debugging**:
+   - Simple bug fixes, parameter tweaks, typo corrections, small patches to existing features
+   - One-liner format: `[date] issue → cause → fix (files touched)`
+   - Use this instead of develop_plan/summary when the change is small and doesn't introduce new functionality
+   - When in doubt: if the fix touches ≤3 files and takes no architectural decisions, use debugging_log.md

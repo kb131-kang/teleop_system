@@ -37,7 +37,16 @@ def main():
     parser.add_argument("--tracker-frequency", type=float, default=0.3,
                         help="Dummy tracker oscillation frequency (Hz)")
     parser.add_argument("--launch-viewer", action="store_true",
-                        help="Launch ROS2 RGB-D point cloud viewer (first-person camera)")
+                        help="Launch RGB-D point cloud viewer (first-person camera)")
+    parser.add_argument("--viewer-mode", type=str, default="ros2-viewer",
+                        choices=["ros2-viewer", "client"],
+                        help="Viewer mode: ros2-viewer (same machine) or client (TCP)")
+    parser.add_argument("--viewer-host", type=str, default="localhost",
+                        help="TCP streaming host for viewer-mode=client (slave IP)")
+    parser.add_argument("--viewer-port", type=int, default=9876,
+                        help="TCP streaming port for viewer-mode=client")
+    parser.add_argument("--no-gui", action="store_true",
+                        help="Disable GUI control panel")
     args = parser.parse_args()
 
     node_specs = [
@@ -52,6 +61,10 @@ def main():
         {
             "name": "Dummy HMD Publisher",
             "module": "teleop_system.simulators.dummy_hmd_pub",
+        },
+        {
+            "name": "Calibration Node",
+            "module": "teleop_system.calibration.calibration_node",
         },
         {
             "name": "Arm Teleop Node",
@@ -71,11 +84,20 @@ def main():
         },
     ]
 
-    if args.launch_viewer:
+    if not args.no_gui:
         node_specs.append({
-            "name": "RGB-D Viewer",
+            "name": "GUI Control Panel",
+            "module": "teleop_system.gui.gui_node",
+        })
+
+    if args.launch_viewer:
+        viewer_args = ["--mode", args.viewer_mode]
+        if args.viewer_mode == "client":
+            viewer_args += ["--host", args.viewer_host, "--port", str(args.viewer_port)]
+        node_specs.append({
+            "name": f"RGB-D Viewer ({args.viewer_mode})",
             "script": "scripts/demo_rgbd_streaming.py",
-            "extra_args": ["--mode", "ros2-viewer"],
+            "extra_args": viewer_args,
         })
 
     print("=" * 60)
@@ -84,6 +106,7 @@ def main():
     print(f"  Tracker amplitude:  {args.tracker_amplitude} m")
     print(f"  Tracker frequency:  {args.tracker_frequency} Hz")
     print(f"  Viewer:             {'enabled' if args.launch_viewer else 'disabled'}")
+    print(f"  GUI:                {'disabled' if args.no_gui else 'enabled'}")
     print(f"  Nodes to launch:    {len(node_specs)}")
     print("  Press Ctrl+C to stop all")
     print()

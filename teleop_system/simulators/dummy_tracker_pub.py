@@ -24,7 +24,10 @@ except ImportError:
     logger.warning("ROS2 not available — DummyTrackerPub cannot be used")
 
 if _ROS2_AVAILABLE:
+    import json
+
     import numpy as np
+    from std_msgs.msg import String
 
     from teleop_system.interfaces.master_device import Pose6D, TrackerRole
     from teleop_system.simulators.simulated_tracker import SimulatedTracker
@@ -134,12 +137,42 @@ if _ROS2_AVAILABLE:
                         PoseStamped, topic, sensor_qos
                     )
 
+            # Calibration offsets
+            self._calibration_offsets: dict[TrackerRole, np.ndarray] = {}
+            status_qos = get_qos_profile(QoSPreset.STATUS)
+            self._offset_sub = self.create_subscription(
+                String, TopicNames.CALIBRATION_OFFSETS,
+                self._offset_cb, status_qos,
+            )
+
             # Timer
             self._timer = self.create_timer(1.0 / rate, self._publish_all)
 
             self.get_logger().info(
                 f"DummyTrackerPub started: {len(self._trackers)} trackers at {rate} Hz "
                 f"(amplitude={amplitude}, frequency={frequency})"
+            )
+
+        def _offset_cb(self, msg: String) -> None:
+            """Parse calibration offsets from JSON."""
+            try:
+                data = json.loads(msg.data)
+            except json.JSONDecodeError:
+                return
+            role_map = {
+                "right_hand": TrackerRole.RIGHT_HAND,
+                "left_hand": TrackerRole.LEFT_HAND,
+                "waist": TrackerRole.WAIST,
+                "right_foot": TrackerRole.RIGHT_FOOT,
+                "left_foot": TrackerRole.LEFT_FOOT,
+                "head": TrackerRole.HEAD,
+            }
+            for name, offset_list in data.items():
+                role = role_map.get(name)
+                if role:
+                    self._calibration_offsets[role] = np.array(offset_list)
+            self.get_logger().info(
+                f"Calibration offsets received: {list(data.keys())}"
             )
 
         def _publish_all(self) -> None:
@@ -150,6 +183,9 @@ if _ROS2_AVAILABLE:
                 pose = tracker.get_pose()
                 if not pose.valid:
                     continue
+                # Apply calibration offset
+                if role in self._calibration_offsets:
+                    pose.position = pose.position + self._calibration_offsets[role]
                 msg = pose6d_to_pose_stamped(pose, self.get_clock())
                 self._tracker_pubs[role].publish(msg)
 

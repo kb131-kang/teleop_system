@@ -1,0 +1,16 @@
+# A-Pose calibration reference configuration
+# Robot reference positions when operator holds A-Pose (arms ~45 degrees from body)
+
+a_pose_reference:
+  # Positions in meters, ROS2 Z-up coordinate frame
+  right_hand: [0.25, -0.35, 0.85]
+  left_hand: [-0.25, -0.35, 0.85]
+  waist: [0.0, 0.0, 0.95]
+  right_foot: [0.15, 0.0, 0.0]
+  left_foot: [-0.15, 0.0, 0.0]
+  head: [0.0, 0.0, 1.55]
+
+calibration:
+  countdown_sec: 3.0        # Seconds before capture starts
+  capture_duration_sec: 1.0  # Duration of pose capture
+  capture_rate_hz: 100       # Expected capture rate

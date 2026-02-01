@@ -30,6 +30,7 @@ except ImportError:
 
 if _ROS2_AVAILABLE:
     import numpy as np
+    from rcl_interfaces.msg import ParameterDescriptor
 
     from teleop_system.simulators.mujoco_sim import MuJoCoSimulator
     from teleop_system.utils.ros2_helpers import (
@@ -37,6 +38,9 @@ if _ROS2_AVAILABLE:
         TopicNames,
         get_qos_profile,
     )
+
+    # Allow launch files to pass int/string/double interchangeably
+    _DYNAMIC_TYPE = ParameterDescriptor(dynamic_typing=True)
 
     # ── MuJoCo actuator ctrl index mapping ──
     # From model_teleop.xml: 26 actuators total
@@ -104,16 +108,18 @@ if _ROS2_AVAILABLE:
             super().__init__(node_name)
 
             # ── Parameters ──
+            # Numeric/bool params use dynamic_typing so launch files can pass
+            # int, double, or string interchangeably (e.g. camera_fps:=30 vs 30.0)
             self.declare_parameter("mjcf_path", "models/rby1/model_teleop.xml")
-            self.declare_parameter("physics_rate_hz", 500.0)
-            self.declare_parameter("publish_rate_hz", 100.0)
-            self.declare_parameter("viewer_rate_hz", 60.0)
-            self.declare_parameter("launch_viewer", False)
-            self.declare_parameter("publish_camera", False)
-            self.declare_parameter("camera_fps", 15.0)
+            self.declare_parameter("physics_rate_hz", 500.0, _DYNAMIC_TYPE)
+            self.declare_parameter("publish_rate_hz", 100.0, _DYNAMIC_TYPE)
+            self.declare_parameter("viewer_rate_hz", 60.0, _DYNAMIC_TYPE)
+            self.declare_parameter("launch_viewer", False, _DYNAMIC_TYPE)
+            self.declare_parameter("publish_camera", False, _DYNAMIC_TYPE)
+            self.declare_parameter("camera_fps", 15.0, _DYNAMIC_TYPE)
             self.declare_parameter("camera_name", "head_camera")
-            self.declare_parameter("camera_width", 640)
-            self.declare_parameter("camera_height", 480)
+            self.declare_parameter("camera_width", 640, _DYNAMIC_TYPE)
+            self.declare_parameter("camera_height", 480, _DYNAMIC_TYPE)
 
             mjcf_path = self.get_parameter("mjcf_path").get_parameter_value().string_value
             physics_rate = _get_float_param(self, "physics_rate_hz")
@@ -128,7 +134,28 @@ if _ROS2_AVAILABLE:
 
             # ── Resolve model path relative to project root ──
             project_root = Path(__file__).resolve().parent.parent.parent
-            full_path = str(project_root / mjcf_path)
+            full_path = project_root / mjcf_path
+
+            # Fallback: if running from a colcon install tree (not --symlink-install),
+            # __file__ is inside install/ and the model won't be found.
+            # Try the current working directory as a fallback.
+            if not full_path.exists():
+                cwd_path = Path.cwd() / mjcf_path
+                if cwd_path.exists():
+                    full_path = cwd_path
+                    self.get_logger().info(
+                        f"Model resolved via CWD: {full_path}"
+                    )
+                else:
+                    self.get_logger().error(
+                        f"Model not found: {full_path}\n"
+                        f"  CWD fallback also failed: {cwd_path}\n"
+                        f"  If using colcon build, rebuild with --symlink-install:\n"
+                        f"    colcon build --packages-select teleop_system --symlink-install"
+                    )
+                    raise FileNotFoundError(f"MuJoCo model not found: {mjcf_path}")
+
+            full_path = str(full_path)
 
             # ── Initialize MuJoCo Simulator ──
             # Enable rendering when camera publishing is requested

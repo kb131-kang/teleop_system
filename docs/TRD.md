@@ -60,34 +60,36 @@
 ### 3.1 전체 시스템 아키텍처
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        GUI Control Panel                         │
-│                    (Dear PyGui, 상태 모니터링)                    │
-└──────────────────────────────┬──────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                     GUI Control Panel (ROS2 Node)                    │
+│  Dear PyGui: Status │ Tracker 3D │ Joint Plots │ Parameters         │
+│  [Calibrate] [RGB-D Viewer] [E-Stop] [Record]                      │
+└──────────────────────────────┬──────────────────────────────────────┘
                                │ ROS2 Topics/Services
-┌──────────────────────────────┴──────────────────────────────────┐
-│                        ROS2 Middleware                            │
-│                    (Jazzy Jalisco, DDS)                           │
-├─────────┬──────────┬──────────┬──────────┬──────────────────────┤
-│         │          │          │          │                       │
-│  ┌──────┴───┐ ┌────┴────┐ ┌──┴───┐ ┌───┴────┐ ┌─────────────┐ │
-│  │ Arm      │ │Locomotion│ │ Hand │ │ Camera │ │ Simulation  │ │
-│  │ Module   │ │ Module   │ │Module│ │ Module │ │ Module      │ │
-│  │          │ │          │ │      │ │        │ │             │ │
-│  │ IK Solver│ │ Gait     │ │Retar-│ │ P.Cloud│ │ Isaac Lab / │ │
-│  │ (Pink)   │ │ Detector │ │geting│ │ Stream │ │ MuJoCo      │ │
-│  └──────┬───┘ └────┬────┘ └──┬───┘ └───┬────┘ └─────────────┘ │
-│         │          │          │          │                       │
-├─────────┴──────────┴──────────┴──────────┴──────────────────────┤
-│                     Interface Layer (ABC)                         │
-│  IMasterDevice │ ISlaveRobot │ IHandDevice │ ICameraDevice       │
-│  IIKSolver     │ ILocomotionController │ ISimulator              │
-├─────────────────────────────────────────────────────────────────┤
-│                     Hardware / Simulator                          │
-│  Vive Tracker │ Manus Glove │ RB-Y1 │ DG-5F │ RGB-D Camera     │
-│  (또는 Dummy/Simulator 구현체)                                    │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────┴──────────────────────────────────────┐
+│                        ROS2 Middleware                               │
+│                    (Jazzy Jalisco, DDS)                              │
+├────────┬──────────┬──────────┬──────────┬───────────┬───────────────┤
+│        │          │          │          │           │               │
+│ ┌──────┴──┐ ┌────┴────┐ ┌──┴───┐ ┌───┴────┐ ┌────┴────┐ ┌───────┴───┐
+│ │  Arm    │ │Locomotion│ │ Hand │ │ Camera │ │Calibra- │ │   Mocap   │
+│ │ Module  │ │ Module   │ │Module│ │ Module │ │  tion   │ │  Replay   │
+│ │ (Pink   │ │ (Gait   │ │(Retar│ │(P.Cloud│ │ (A-Pose │ │  (BVH     │
+│ │  IK)    │ │Detector)│ │geting│ │Stream) │ │ Offset) │ │ Publisher)│
+│ └────┬────┘ └────┬────┘ └──┬───┘ └───┬────┘ └────┬────┘ └─────┬─────┘
+│      │           │         │         │            │            │     │
+├──────┴───────────┴─────────┴─────────┴────────────┴────────────┴────┤
+│                     Interface Layer (ABC)                            │
+│  IMasterTracker │ ISlaveArm │ ISlaveHand │ IMobileBase               │
+│  IHandInput │ IIKSolver │ ICameraStream │ ISimulator                 │
+├─────────────────────────────────────────────────────────────────────┤
+│                     Hardware / Simulator                             │
+│  Vive Tracker │ Manus Glove │ RB-Y1 │ DG-5F │ RGB-D Camera         │
+│  MuJoCo │ Isaac Lab │ Simulated/Dummy (구현체)                       │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+> **[2026-02-01 Updated]** GUI를 ROS2 Node로 전환 (4탭: Status/Tracker 3D/Joint Plots/Parameters), Calibration(A-Pose 오프셋) 모듈 추가, Mocap Replay(BVH Publisher) 모듈 추가. Interface Layer 이름을 실제 구현(`IMasterTracker`, `ISlaveArm` 등)과 일치하도록 수정.
 
 ### 3.2 인터페이스 설계 (SOLID 원칙)
 
@@ -205,10 +207,15 @@ teleop_system/
 │   │   ├── vive_tracker.yaml
 │   │   ├── manus_glove.yaml
 │   │   └── dg5f.yaml
-│   └── teleop/
-│       ├── arm.yaml                 # IK 게인, 속도 제한 등
-│       ├── locomotion.yaml          # 걸음 감지 파라미터
-│       └── hand.yaml               # 리타겟팅 파라미터
+│   ├── teleop/
+│   │   ├── arm.yaml                 # IK 게인, 속도 제한 등
+│   │   ├── locomotion.yaml          # 걸음 감지 파라미터
+│   │   └── hand.yaml               # 리타겟팅 파라미터
+│   ├── mocap/                       # 모캡 재생 설정
+│   │   ├── default.yaml
+│   │   └── cmu_joint_mapping.yaml
+│   └── calibration/                 # 캘리브레이션 설정
+│       └── a_pose_reference.yaml    # A-Pose 레퍼런스 위치
 │
 ├── teleop_system/                   # 메인 Python 패키지
 │   ├── __init__.py
@@ -275,7 +282,24 @@ teleop_system/
 │   │
 │   ├── gui/                         # GUI 제어 패널
 │   │   ├── __init__.py
-│   │   └── control_panel.py         # Dear PyGui 기반 (dpg 없을 시 graceful fallback)
+│   │   ├── control_panel.py         # Dear PyGui 기반 (4탭: Status/Tracker/Joints/Params)
+│   │   └── gui_node.py              # ROS2 Node 래퍼 (토픽 구독 + DearPyGui 메인루프)
+│   │
+│   ├── calibration/                 # 트래커 캘리브레이션
+│   │   ├── __init__.py
+│   │   ├── pose_calibrator.py       # A-Pose 캘리브레이션 상태 머신 + 오프셋 계산
+│   │   └── calibration_node.py      # ROS2 서비스/퍼블리셔 노드
+│   │
+│   ├── mocap/                       # 모션 캡처 재생 인프라
+│   │   ├── __init__.py
+│   │   ├── bvh_loader.py            # BVH 파일 파서 + 좌표 변환
+│   │   ├── skeleton_mapper.py       # BVH 조인트 → TrackerRole 매핑
+│   │   ├── bvh_tracker_adapter.py   # IMasterTracker 구현 (BVH 재생)
+│   │   ├── bvh_hand_adapter.py      # IHandInput 구현 (BVH 손 데이터)
+│   │   ├── bvh_replay_publisher.py  # ROS2 BVH 데이터 퍼블리셔
+│   │   ├── metrics.py               # 트래킹 에러, 스무스니스 등 메트릭
+│   │   ├── skeleton_viewer.py       # Matplotlib 3D 스켈레톤 시각화
+│   │   └── dual_viewer.py           # 병렬 비교 뷰어
 │   │
 │   └── utils/                       # 유틸리티
 │       ├── __init__.py
@@ -287,7 +311,11 @@ teleop_system/
 ├── launch/                          # ROS2 launch 파일
 │   ├── teleop_full.launch.py        # 전체 시스템 실행 (HW 모드)
 │   ├── teleop_sim.launch.py         # 시뮬레이션 모드 실행
+│   ├── teleop_sim_full.launch.py    # 시뮬레이션 전체 (Master+Slave)
 │   ├── teleop_mujoco_bridge.launch.py  # MuJoCo 브릿지 + 전체 더미 노드
+│   ├── master_sim.launch.py         # 마스터 시스템 (시뮬레이션 입력)
+│   ├── master_mocap.launch.py       # 마스터 시스템 (BVH 모캡 입력)
+│   ├── slave_mujoco.launch.py       # 슬레이브 시스템 (MuJoCo)
 │   ├── arm_only.launch.py           # 팔 모듈만 실행
 │   └── hand_only.launch.py          # 핸드 모듈만 실행
 │

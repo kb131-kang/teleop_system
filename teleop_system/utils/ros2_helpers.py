@@ -97,6 +97,13 @@ class TopicNames:
     # MuJoCo simulation feedback
     MUJOCO_JOINT_STATES = "/mujoco/joint_states"
 
+    # Calibration
+    CALIBRATION_STATE = "/calibration/state"
+    CALIBRATION_OFFSETS = "/calibration/offsets"
+
+    # Playback control
+    PLAYBACK_STATE = "/playback/state"
+
 
 class ServiceNames:
     """Standard ROS2 service names for the teleoperation system."""
@@ -104,6 +111,7 @@ class ServiceNames:
     SET_MODE = "/teleop/set_mode"
     ENABLE_MODULE = "/teleop/enable_module"
     CALIBRATE = "/teleop/calibrate"
+    START_PLAYBACK = "/teleop/start_playback"
 
 
 def create_timer_rate(hz: float) -> float:

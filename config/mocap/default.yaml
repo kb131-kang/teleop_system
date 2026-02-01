@@ -1,0 +1,26 @@
+mocap:
+  # BVH data directory (relative to project root)
+  data_dir: data/bvh/cmu
+
+  # Default BVH file to replay
+  default_file: 002/02_01.bvh
+
+  # Playback settings
+  playback_speed: 1.0
+  loop: true
+  rate_hz: 120
+
+  # BVH → meters scale factor
+  # 0.056 works well for CMU BVH data (places hips at ~0.95m height)
+  scale: 0.056
+
+  # Position normalization mode:
+  #   'relative' — motion relative to first frame + robot reference positions
+  #   'absolute' — raw converted positions (BVH→ROS2)
+  normalize_mode: relative
+
+  # Recording settings
+  recording:
+    enabled: false
+    output_dir: data/recordings
+    output_format: npz  # npz or csv

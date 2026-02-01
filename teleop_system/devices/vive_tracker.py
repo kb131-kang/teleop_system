@@ -172,6 +172,7 @@ class ViveTrackerManager:
         self._auto_detect = auto_detect
         self._vr_system = None
         self._trackers: dict[TrackerRole, ViveTracker] = {}
+        self._base_stations: list[dict] = []
         self._initialized = False
 
     def initialize(self) -> bool:
@@ -186,9 +187,47 @@ class ViveTrackerManager:
             logger.error(f"Failed to connect to SteamVR: {e}")
             return False
 
+        self._base_stations = self._discover_base_stations()
         self._discover_trackers()
         self._initialized = True
         return True
+
+    def _discover_base_stations(self) -> list[dict]:
+        """Scan SteamVR for connected base stations and log their status.
+
+        Returns:
+            List of dicts with serial, index, and tracking status for each base station.
+        """
+        stations = []
+        for idx in range(openvr.k_unMaxTrackedDeviceCount):
+            device_class = self._vr_system.getTrackedDeviceClass(idx)
+            if device_class != openvr.TrackedDeviceClass_TrackingReference:
+                continue
+
+            serial = self._vr_system.getStringTrackedDeviceProperty(
+                idx, openvr.Prop_SerialNumber_String
+            )
+            connected = self._vr_system.isTrackedDeviceConnected(idx)
+
+            stations.append({
+                "index": idx,
+                "serial": serial,
+                "connected": connected,
+            })
+            status = "connected" if connected else "not connected"
+            logger.info(f"Base station found: {serial} (idx={idx}, {status})")
+
+        if not stations:
+            logger.warning("No base stations detected — tracker poses may be unavailable")
+        else:
+            logger.info(f"Base stations: {len(stations)} found, "
+                        f"{sum(1 for s in stations if s['connected'])} connected")
+
+        return stations
+
+    def get_base_station_count(self) -> int:
+        """Return the number of connected base stations discovered at init."""
+        return len(self._base_stations)
 
     def _discover_trackers(self) -> None:
         """Scan SteamVR for connected trackers and assign roles."""

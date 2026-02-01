@@ -10,7 +10,7 @@ Launches the MuJoCo ROS2 Bridge which:
 Usage:
     ros2 launch teleop_system slave_mujoco.launch.py
     ros2 launch teleop_system slave_mujoco.launch.py launch_viewer:=true
-    ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true camera_fps:=30
+    ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true camera_fps:=30.0
     ros2 launch teleop_system slave_mujoco.launch.py publish_camera:=true launch_streaming:=true
 """
 
