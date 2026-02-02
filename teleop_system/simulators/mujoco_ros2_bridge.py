@@ -33,8 +33,11 @@ if _ROS2_AVAILABLE:
     from rcl_interfaces.msg import ParameterDescriptor
 
     from teleop_system.simulators.mujoco_sim import MuJoCoSimulator
+    from std_srvs.srv import Trigger
+
     from teleop_system.utils.ros2_helpers import (
         QoSPreset,
+        ServiceNames,
         TopicNames,
         get_qos_profile,
     )
@@ -259,10 +262,116 @@ if _ROS2_AVAILABLE:
                     f"@ {camera_fps}Hz, {camera_width}x{camera_height}"
                 )
 
+            # ── E-stop flag: when True, ignore all command callbacks ──
+            self._estop_active = False
+            from std_msgs.msg import Bool
+            status_qos = get_qos_profile(QoSPreset.STATUS)
+            self.create_subscription(
+                Bool, TopicNames.ESTOP_ACTIVE,
+                self._estop_status_cb, status_qos,
+            )
+
+            # ── Initial pose configuration ──
+            self._initial_pose = {
+                "torso": [0.0] * 6,
+                "right_arm": [0.0, -0.8, 0.0, -0.6, 0.0, 0.0, 0.0],
+                "left_arm": [0.0, 0.8, 0.0, -0.6, 0.0, 0.0, 0.0],
+                "head": [0.0, 0.0],
+                "right_gripper": 0.0,
+                "left_gripper": 0.0,
+            }
+            # Try loading from YAML config
+            self._load_initial_pose_config(project_root)
+
+            # ── Init pose service ──
+            self._init_pose_srv = self.create_service(
+                Trigger, ServiceNames.INIT_POSE,
+                self._init_pose_callback,
+            )
+
             self.get_logger().info("MuJoCoROS2Bridge ready")
+
+        def _load_initial_pose_config(self, project_root: Path) -> None:
+            """Load initial_pose from config/simulation/mujoco.yaml if available."""
+            config_path = project_root / "config" / "simulation" / "mujoco.yaml"
+            if not config_path.exists():
+                return
+            try:
+                import yaml
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f)
+                ip = cfg.get("mujoco", {}).get("initial_pose", {})
+                if not ip:
+                    return
+                if "torso" in ip:
+                    self._initial_pose["torso"] = list(ip["torso"])
+                if "right_arm" in ip:
+                    self._initial_pose["right_arm"] = list(ip["right_arm"])
+                if "left_arm" in ip:
+                    self._initial_pose["left_arm"] = list(ip["left_arm"])
+                if "head" in ip:
+                    self._initial_pose["head"] = list(ip["head"])
+                if "right_gripper" in ip:
+                    self._initial_pose["right_gripper"] = float(ip["right_gripper"])
+                if "left_gripper" in ip:
+                    self._initial_pose["left_gripper"] = float(ip["left_gripper"])
+                self.get_logger().info(f"Loaded initial pose from {config_path}")
+            except Exception as e:
+                self.get_logger().warning(f"Failed to load initial pose config: {e}")
+
+        def _init_pose_callback(self, request, response) -> object:
+            """Set robot to initial A-pose with slow interpolation.
+
+            Interpolates from current position to target over ~2 seconds
+            (1000 physics steps at 500Hz) for real robot safety.
+            """
+            try:
+                ctrl = self._sim._data.ctrl
+                # Capture current ctrl values as start
+                start_ctrl = ctrl.copy()
+
+                # Build target ctrl array
+                target_ctrl = ctrl.copy()
+                target_ctrl[CTRL_TORSO] = self._initial_pose["torso"]
+                target_ctrl[CTRL_RIGHT_ARM] = self._initial_pose["right_arm"]
+                target_ctrl[CTRL_LEFT_ARM] = self._initial_pose["left_arm"]
+                target_ctrl[CTRL_HEAD] = self._initial_pose["head"]
+                target_ctrl[CTRL_RIGHT_GRIPPER] = self._initial_pose["right_gripper"]
+                target_ctrl[CTRL_LEFT_GRIPPER] = self._initial_pose["left_gripper"]
+
+                # Interpolate over 1000 steps (~2s at 500Hz)
+                n_steps = 1000
+                for i in range(n_steps):
+                    alpha = (i + 1) / n_steps
+                    # Smooth interpolation (ease-in-out)
+                    alpha = 0.5 * (1.0 - np.cos(alpha * np.pi))
+                    ctrl[:] = start_ctrl + alpha * (target_ctrl - start_ctrl)
+                    self._sim.step()
+
+                response.success = True
+                response.message = "Initial pose set (smooth interpolation)"
+                self.get_logger().info("Robot set to initial pose (2s interpolation)")
+            except Exception as e:
+                response.success = False
+                response.message = str(e)
+                self.get_logger().error(f"Failed to set initial pose: {e}")
+            return response
+
+        def _estop_status_cb(self, msg) -> None:
+            """Handle estop active/inactive from GUI."""
+            was_active = self._estop_active
+            self._estop_active = msg.data
+            if msg.data and not was_active:
+                self.get_logger().warning("E-STOP active — ignoring command topics")
+                # Zero all ctrl immediately
+                self._sim._data.ctrl[:] = 0.0
+            elif not msg.data and was_active:
+                self.get_logger().info("E-STOP released — command topics re-enabled")
 
         def _joint_cmd_callback(self, msg: JointState, ctrl_slice: slice) -> None:
             """Apply incoming joint positions to MuJoCo ctrl at the given indices."""
+            if self._estop_active:
+                return  # Ignore commands during estop
             if not msg.position:
                 return
             positions = np.array(msg.position)
@@ -272,6 +381,8 @@ if _ROS2_AVAILABLE:
 
         def _base_cmd_callback(self, msg: Twist) -> None:
             """Convert Twist to differential drive wheel velocities."""
+            if self._estop_active:
+                return  # Ignore commands during estop
             wheel_base = 0.35  # approximate wheel separation (meters)
             v_left = msg.linear.x - msg.angular.z * wheel_base / 2.0
             v_right = msg.linear.x + msg.angular.z * wheel_base / 2.0
@@ -284,6 +395,8 @@ if _ROS2_AVAILABLE:
             Averages the incoming joint positions and scales by 20.0 to convert
             from joint angles (radians) to motor force (N) for visible gripper motion.
             """
+            if self._estop_active:
+                return  # Ignore commands during estop
             if msg.position:
                 self._sim._data.ctrl[ctrl_index] = float(np.mean(msg.position)) * 20.0
 

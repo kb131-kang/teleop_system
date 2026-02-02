@@ -18,6 +18,8 @@ setup(
         ("share/" + package_name + "/config/simulation", glob("config/simulation/*.yaml")),
         ("share/" + package_name + "/config/mocap", glob("config/mocap/*.yaml")),
         ("share/" + package_name + "/config/calibration", glob("config/calibration/*.yaml")),
+        ("share/" + package_name + "/models/rby1/urdf", glob("models/rby1/urdf/*.urdf")),
+        ("share/" + package_name + "/models/rby1", glob("models/rby1/*.xml")),
     ],
     install_requires=[
         "numpy>=1.26.0",

@@ -4,6 +4,54 @@ This document tracks development plans for the RB-Y1 teleoperation system. Each 
 
 ---
 
+## 2026-02-02 (Session 8) — Bug Fixes: Init Pose Speed, URDF Path, 3D Tracker, Head Tracker, E-Stop
+
+### Objective
+
+Fix 5 issues discovered during integration testing: (1) init pose teleports instead of interpolating, (2) arm teleop can't find URDF in installed mode, (3) tracker view needs 3D projection instead of 2D, (4) head tracker position is hardcoded, (5) e-stop/soft-stop doesn't actually stop the robot.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `teleop_system/simulators/mujoco_ros2_bridge.py` | Smooth cosine interpolation for init pose (2s), estop flag ignoring commands |
+| `teleop_system/modules/arm_teleop/arm_teleop_node.py` | 3-tier URDF path resolution (ament_index → __file__ → CWD) |
+| `setup.py` | Add models/ to data_files |
+| `teleop_system/gui/control_panel.py` | 3D isometric projection drawlist, project_3d_to_2d(), BONE_CATEGORY |
+| `teleop_system/gui/gui_node.py` | Head tracker sub, estop Bool publisher, _publish_estop_status() |
+| `teleop_system/utils/ros2_helpers.py` | Add TRACKER_HEAD, ESTOP_ACTIVE topics |
+| `teleop_system/mocap/bvh_replay_publisher.py` | Add HEAD to _tracker_pubs |
+
+### Result
+
+**Completed.** 270/270 tests pass.
+
+---
+
+## 2026-02-01 (Session 7) — Dual Viewer, Init Pose, Workflow Buttons, Hand Skeleton
+
+### Objective
+
+4 major GUI enhancements: (1) Tracker View → dual skeleton+tracker viewer, (2) configurable initial A-pose with GUI button and ROS2 service, (3) reorder buttons to match teleop workflow (module enable → init → calibrate → start → stop → e-stop), (4) hand skeleton visualization replacing bar charts.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `teleop_system/utils/ros2_helpers.py` | Add INIT_POSE service name |
+| `config/simulation/mujoco.yaml` | Add initial_pose section |
+| `config/hardware/rby1.yaml` | Add initial_pose section |
+| `teleop_system/simulators/mujoco_ros2_bridge.py` | Init pose service server + config loading |
+| `teleop_system/gui/control_panel.py` | Complete rewrite: 4 enhancements (status tab, dual tracker, hand skeleton, workflow buttons) |
+| `teleop_system/gui/gui_node.py` | Init pose client, soft stop/resume, hand cmd subscriptions |
+| `tests/test_phase5_camera_gui.py` | Updated test for enabled=True default |
+
+### Result
+
+**Completed.** 270/270 tests pass.
+
+---
+
 ## 2026-02-01 (Session 6) — GUI Enhancements: E-Stop, Module Activity, Hand Viewer, 3-View Tracker
 
 ### Objective

@@ -30,7 +30,7 @@ def main():
         from rclpy.node import Node
         from geometry_msgs.msg import PoseStamped, QuaternionStamped, Twist
         from sensor_msgs.msg import JointState
-        from std_msgs.msg import String
+        from std_msgs.msg import Bool, String
         from std_srvs.srv import Trigger
     except ImportError:
         logger.error("ROS2 (rclpy) is required for GUINode")
@@ -73,22 +73,29 @@ def main():
             self._panel.set_calibrate_callback(self._request_calibration)
             self._panel.set_emergency_stop_callback(self._toggle_emergency_stop)
             self._panel.set_start_playback_callback(self._request_start_playback)
+            self._panel.set_init_pose_callback(self._request_init_pose)
+            self._panel.set_soft_stop_callback(self._soft_stop)
+            self._panel.set_resume_callback(self._resume)
 
             # E-stop timer (created on demand)
             self._estop_timer = None
+            # Soft-stop timer (ramp-down then hold)
+            self._soft_stop_timer = None
+            self._soft_stop_ticks = 0  # counts 50Hz ticks for 0.5s ramp
 
             # ROS2 subscriptions
             sensor_qos = get_qos_profile(QoSPreset.SENSOR_DATA)
             status_qos = get_qos_profile(QoSPreset.STATUS)
             cmd_qos = get_qos_profile(QoSPreset.COMMAND)
 
-            # Tracker pose subscriptions
+            # Tracker pose subscriptions (including HEAD for BVH replay)
             tracker_topics = {
                 "right_hand": TopicNames.TRACKER_RIGHT_HAND,
                 "left_hand": TopicNames.TRACKER_LEFT_HAND,
                 "waist": TopicNames.TRACKER_WAIST,
                 "right_foot": TopicNames.TRACKER_RIGHT_FOOT,
                 "left_foot": TopicNames.TRACKER_LEFT_FOOT,
+                "head": TopicNames.TRACKER_HEAD,
             }
 
             for role_name, topic in tracker_topics.items():
@@ -98,7 +105,7 @@ def main():
                     sensor_qos,
                 )
 
-            # HMD subscription
+            # HMD subscription (fallback for head position when no tracker data)
             self.create_subscription(
                 QuaternionStamped, TopicNames.HMD_ORIENTATION,
                 self._hmd_cb, sensor_qos,
@@ -139,6 +146,18 @@ def main():
                 sensor_qos,
             )
 
+            # Hand command output subscriptions (for skeleton overlay)
+            self.create_subscription(
+                JointState, TopicNames.HAND_LEFT_CMD,
+                lambda msg: self._hand_cmd_cb("left", msg),
+                cmd_qos,
+            )
+            self.create_subscription(
+                JointState, TopicNames.HAND_RIGHT_CMD,
+                lambda msg: self._hand_cmd_cb("right", msg),
+                cmd_qos,
+            )
+
             # Locomotion output (for module activity monitoring)
             self.create_subscription(
                 Twist, TopicNames.BASE_CMD_VEL,
@@ -174,6 +193,11 @@ def main():
                 JointState, TopicNames.HAND_RIGHT_CMD, cmd_qos,
             )
 
+            # E-stop status publisher (tells MuJoCo bridge to ignore commands)
+            self._estop_status_pub = self.create_publisher(
+                Bool, TopicNames.ESTOP_ACTIVE, status_qos,
+            )
+
             # Calibration service client
             self._cal_client = self.create_client(
                 Trigger, ServiceNames.CALIBRATE,
@@ -188,6 +212,11 @@ def main():
             # Start playback service client
             self._playback_client = self.create_client(
                 Trigger, ServiceNames.START_PLAYBACK,
+            )
+
+            # Init pose service client
+            self._init_pose_client = self.create_client(
+                Trigger, ServiceNames.INIT_POSE,
             )
 
             # Track start time for relative timestamps in plots
@@ -218,11 +247,13 @@ def main():
                 self._panel.tracker_data.positions[role_name] = pos
 
         def _hmd_cb(self, msg: QuaternionStamped) -> None:
-            # HEAD tracker — position not meaningful from HMD, use [0,0,1.55]
+            # HMD only provides orientation, not position.
+            # Only set fallback head position if no tracker data for head.
             with self._panel.lock:
-                self._panel.tracker_data.positions["head"] = np.array([
-                    0.0, 0.0, 1.55,
-                ])
+                if "head" not in self._panel.tracker_data.positions:
+                    self._panel.tracker_data.positions["head"] = np.array([
+                        0.0, 0.0, 1.55,
+                    ])
                 self._mark_module_active("Camera")
 
         def _joint_cmd_cb(self, group: str, msg: JointState) -> None:
@@ -255,6 +286,18 @@ def main():
                 else:
                     hd.right_joints = positions
                 self._mark_module_active("Hand Teleop")
+
+        def _hand_cmd_cb(self, side: str, msg: JointState) -> None:
+            positions = np.array(msg.position) if msg.position else None
+            if positions is None or len(positions) == 0:
+                return
+
+            with self._panel.lock:
+                hd = self._panel.hand_data
+                if side == "left":
+                    hd.left_cmd = positions
+                else:
+                    hd.right_cmd = positions
 
         def _joint_states_cb(self, msg: JointState) -> None:
             t = time.monotonic() - self._start_time
@@ -354,10 +397,70 @@ def main():
             except Exception as e:
                 self.get_logger().error(f"Calibration service error: {e}")
 
+        def _request_init_pose(self) -> None:
+            """Call /teleop/init_pose service to set robot to initial A-pose."""
+            if not self._init_pose_client.service_is_ready():
+                self.get_logger().warning(
+                    "Init pose service not available "
+                    "(MuJoCo bridge may not be running)"
+                )
+                return
+
+            request = Trigger.Request()
+            future = self._init_pose_client.call_async(request)
+            future.add_done_callback(self._init_pose_response_cb)
+            self.get_logger().info("Init pose request sent")
+
+        def _init_pose_response_cb(self, future) -> None:
+            try:
+                result = future.result()
+                if result.success:
+                    self.get_logger().info(f"Init pose: {result.message}")
+                else:
+                    self.get_logger().warning(
+                        f"Init pose failed: {result.message}"
+                    )
+            except Exception as e:
+                self.get_logger().error(f"Init pose service error: {e}")
+
+        def _soft_stop(self) -> None:
+            """Gradually ramp commands to zero over 0.5s, then hold."""
+            self.get_logger().warning("SOFT STOP — ramping to zero")
+            self._soft_stop_ticks = 0
+            # Tell bridge to ignore normal commands
+            self._publish_estop_status(True)
+            # Publish zeros immediately
+            self._publish_estop_zeros()
+            # Create timer for continuous zero publishing at 50Hz
+            if self._soft_stop_timer is None:
+                self._soft_stop_timer = self.create_timer(
+                    0.02, self._soft_stop_tick,
+                )
+
+        def _soft_stop_tick(self) -> None:
+            """50Hz tick during soft stop: publish zero commands."""
+            self._soft_stop_ticks += 1
+            self._publish_estop_zeros()
+            # After 0.5s ramp (25 ticks at 50Hz), keep holding zeros
+            # Timer continues until resume is called
+
+        def _resume(self) -> None:
+            """Cancel soft stop, allow normal command flow."""
+            self.get_logger().info("Resuming from soft stop")
+            if self._soft_stop_timer is not None:
+                self._soft_stop_timer.cancel()
+                self.destroy_timer(self._soft_stop_timer)
+                self._soft_stop_timer = None
+            self._soft_stop_ticks = 0
+            # Tell bridge to re-enable normal commands
+            self._publish_estop_status(False)
+
         def _toggle_emergency_stop(self, active: bool) -> None:
             """Toggle continuous zero-command publishing on all output topics."""
             if active:
                 self.get_logger().warning("EMERGENCY STOP ACTIVATED")
+                # Tell bridge to ignore normal commands
+                self._publish_estop_status(True)
                 # Publish zeros immediately
                 self._publish_estop_zeros()
                 # Create timer for continuous zero publishing at 50Hz
@@ -371,6 +474,14 @@ def main():
                     self._estop_timer.cancel()
                     self.destroy_timer(self._estop_timer)
                     self._estop_timer = None
+                # Tell bridge to re-enable normal commands
+                self._publish_estop_status(False)
+
+        def _publish_estop_status(self, active: bool) -> None:
+            """Publish estop active/inactive to MuJoCo bridge."""
+            msg = Bool()
+            msg.data = active
+            self._estop_status_pub.publish(msg)
 
         def _publish_estop_zeros(self) -> None:
             """Publish zero commands to all output topics."""

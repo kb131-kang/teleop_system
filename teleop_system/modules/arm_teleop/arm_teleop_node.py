@@ -183,8 +183,32 @@ if _ROS2_AVAILABLE:
                 }
             else:
                 # PinkIKSolver: needs patched URDF and actual EE frame names
-                project_root = Path(__file__).resolve().parent.parent.parent.parent
-                urdf_path = str(project_root / "models" / "rby1" / "urdf" / "model_pinocchio.urdf")
+                # Try ament_index (works when installed via colcon)
+                urdf_path = None
+                try:
+                    from ament_index_python.packages import get_package_share_directory
+                    pkg_dir = get_package_share_directory("teleop_system")
+                    candidate = Path(pkg_dir) / "models" / "rby1" / "urdf" / "model_pinocchio.urdf"
+                    if candidate.exists():
+                        urdf_path = str(candidate)
+                except Exception:
+                    pass
+
+                # Fallback: source tree via __file__ traversal
+                if urdf_path is None:
+                    project_root = Path(__file__).resolve().parent.parent.parent.parent
+                    candidate = project_root / "models" / "rby1" / "urdf" / "model_pinocchio.urdf"
+                    if candidate.exists():
+                        urdf_path = str(candidate)
+
+                # Fallback: CWD
+                if urdf_path is None:
+                    candidate = Path.cwd() / "models" / "rby1" / "urdf" / "model_pinocchio.urdf"
+                    if candidate.exists():
+                        urdf_path = str(candidate)
+
+                if urdf_path is None:
+                    urdf_path = str(Path(__file__).resolve().parent.parent.parent.parent / "models" / "rby1" / "urdf" / "model_pinocchio.urdf")
                 success = solver.initialize(
                     urdf_path,
                     ee_frames={

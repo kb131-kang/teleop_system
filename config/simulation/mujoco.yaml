@@ -19,3 +19,13 @@ mujoco:
     # Position control gains for MuJoCo actuators
     kp: 1000.0
     kd: 100.0
+
+  # Initial pose (A-pose): arms spread ~45 degrees, elbows slightly bent
+  # Joint angles in radians matching ctrl array order
+  initial_pose:
+    torso: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]              # 6 joints
+    right_arm: [0.0, -0.8, 0.0, -0.6, 0.0, 0.0, 0.0]    # 7 joints (shoulder abducted)
+    left_arm: [0.0, 0.8, 0.0, -0.6, 0.0, 0.0, 0.0]      # 7 joints (mirror)
+    head: [0.0, 0.0]                                       # 2 joints
+    right_gripper: 0.0
+    left_gripper: 0.0

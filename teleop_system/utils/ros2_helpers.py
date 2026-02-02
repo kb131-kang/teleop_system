@@ -72,6 +72,8 @@ class TopicNames:
     TRACKER_RIGHT_FOOT = "/master/tracker/right_foot"
     TRACKER_LEFT_FOOT = "/master/tracker/left_foot"
 
+    TRACKER_HEAD = "/master/tracker/head"
+
     HMD_ORIENTATION = "/master/hmd/orientation"
 
     HAND_LEFT_JOINTS = "/master/hand/left/joints"
@@ -93,6 +95,7 @@ class TopicNames:
     CAMERA_INFO = "/slave/camera/camera_info"
 
     SYSTEM_STATUS = "/system/status"
+    ESTOP_ACTIVE = "/system/estop_active"
 
     # MuJoCo simulation feedback
     MUJOCO_JOINT_STATES = "/mujoco/joint_states"
@@ -112,6 +115,7 @@ class ServiceNames:
     ENABLE_MODULE = "/teleop/enable_module"
     CALIBRATE = "/teleop/calibrate"
     START_PLAYBACK = "/teleop/start_playback"
+    INIT_POSE = "/teleop/init_pose"
 
 
 def create_timer_rate(hz: float) -> float:

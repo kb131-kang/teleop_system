@@ -6,6 +6,20 @@ Format: `[date] issue → cause → fix (files touched)`
 
 ---
 
+## 2026-02-02
+
+- **Init pose moves too fast** — Calling `/teleop/init_pose` service instantly sets ctrl values and steps physics 100x, causing the robot to teleport to the target pose. Dangerous for real robot. → Changed to smooth cosine interpolation over 1000 physics steps (~2s at 500Hz). Captures current ctrl as start, interpolates to target with `0.5*(1-cos(π*α))` easing. (`teleop_system/simulators/mujoco_ros2_bridge.py`)
+
+- **Arm teleop URDF not found when run via `ros2 launch`** — `arm_teleop_node.py` uses `Path(__file__).parent⁴` to locate `models/rby1/urdf/model_pinocchio.urdf`, which resolves to `site-packages/` in installed mode instead of the source tree. Also, `setup.py` doesn't include `models/` directory in `data_files`. → Added 3-tier path resolution: (1) `ament_index_python.get_package_share_directory`, (2) `__file__` parent traversal, (3) CWD fallback. Also added `models/rby1/urdf/*.urdf` and `models/rby1/*.xml` to `setup.py` `data_files`. (`teleop_system/modules/arm_teleop/arm_teleop_node.py`, `setup.py`)
+
+- **Tracker View is 2D (X-Z / Y-Z projections)** — GUI tracker view used DearPyGui plot scatter/line series showing 2D projections, which lacked depth perception compared to matplotlib's 3D viewer. → Replaced with DearPyGui drawlist canvases using isometric 3D projection (elev=25°, azim=-60°). Both panels (skeleton + tracker) now show 3D perspective with ground grid, axis markers, and depth-aware rendering. Added `project_3d_to_2d()`, `_draw_tracker_3d()`, and `BONE_CATEGORY` mapping. (`teleop_system/gui/control_panel.py`)
+
+- **Head tracker position hardcoded to [0, 0, 1.55] in GUI** — `gui_node.py` `_hmd_cb` always set head position to `[0, 0, 1.55]` because HMD only provides orientation. When BVH replay publishes actual head position, it was overwritten by the HMD callback. → (1) Added `TRACKER_HEAD = "/master/tracker/head"` to TopicNames, (2) Added HEAD to BVH replay `_tracker_pubs`, (3) Added head tracker subscription in gui_node.py alongside other trackers, (4) Changed `_hmd_cb` to only set fallback position if no tracker data exists for head. (`teleop_system/utils/ros2_helpers.py`, `teleop_system/mocap/bvh_replay_publisher.py`, `teleop_system/gui/gui_node.py`)
+
+- **E-stop/soft-stop doesn't stop robot movement** — GUI publishes zeros at 50Hz on e-stop, but arm_teleop_node publishes IK solutions at 100Hz on the same topics. MuJoCo bridge applies the latest message, so arm teleop's higher rate overrides the zeros. → Added `/system/estop_active` Bool topic. GUI publishes True on e-stop/soft-stop, False on release/resume. MuJoCo bridge subscribes and ignores all command callbacks when estop is active, also zeroes all ctrl immediately. (`teleop_system/utils/ros2_helpers.py`, `teleop_system/simulators/mujoco_ros2_bridge.py`, `teleop_system/gui/gui_node.py`)
+
+---
+
 ## 2026-02-01
 
 - **Emergency Stop only fires once** — Clicking "EMERGENCY STOP" in the GUI published zero commands once, but arm_teleop immediately overwrote them with new IK commands on the next cycle (~10ms later). → Changed E-stop to a toggle: when activated, a 50Hz timer continuously publishes zero commands on all arm/hand/base command topics until released. Also zeroes hand commands (was arm+base only). Button changes to bright red with "RELEASE E-STOP" label when active. (`teleop_system/gui/control_panel.py`, `teleop_system/gui/gui_node.py`)

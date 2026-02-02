@@ -4,6 +4,75 @@ This document tracks development progress for the RB-Y1 teleoperation system. Ea
 
 ---
 
+## 2026-02-02 (Session 8) — Bug Fixes: Init Pose Speed, URDF Path, 3D Tracker, Head Tracker, E-Stop
+
+### Summary
+
+Fixed 5 integration bugs: init pose now interpolates smoothly over 2s instead of teleporting, arm teleop URDF path resolves correctly in both source and installed modes, tracker view uses isometric 3D projection matching the dual_viewer.py style, head tracker uses real BVH position data instead of hardcoded height, and e-stop/soft-stop now reliably stops the robot via a dedicated estop flag on the MuJoCo bridge.
+
+### Bug Fixes
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Init pose teleports robot instantly | `_init_pose_callback` sets ctrl values and runs 100 steps | Smooth cosine interpolation over 1000 steps (~2s at 500Hz) |
+| Arm teleop URDF not found via `ros2 launch` | `__file__` parent traversal points to `site-packages/`, models not in data_files | 3-tier resolution: ament_index → __file__ → CWD; added models/ to setup.py data_files |
+| Tracker view is 2D (X-Z / Y-Z) | DearPyGui plots with 2D scatter/line series | Replaced with drawlist canvases + isometric 3D projection (elev=25°, azim=-60°) |
+| Head tracker position hardcoded | `_hmd_cb` always sets [0,0,1.55]; no head tracker topic | Added TRACKER_HEAD topic, HEAD in BVH publisher, head sub in GUI, HMD fallback only |
+| E-stop doesn't stop robot | Arm teleop 100Hz overrides GUI 50Hz zeros on same topics | Added `/system/estop_active` Bool topic; bridge ignores commands when active |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `teleop_system/simulators/mujoco_ros2_bridge.py` | Smooth init pose interpolation (cosine easing, 2s), estop subscription + command ignore flag |
+| `teleop_system/modules/arm_teleop/arm_teleop_node.py` | 3-tier URDF path resolution (ament_index → source → CWD) |
+| `setup.py` | Added models/rby1/urdf/*.urdf and models/rby1/*.xml to data_files |
+| `teleop_system/gui/control_panel.py` | `project_3d_to_2d()`, `_draw_tracker_3d()`, `BONE_CATEGORY`, drawlist-based 3D tracker view |
+| `teleop_system/gui/gui_node.py` | Head tracker subscription, `_publish_estop_status()`, Bool estop publisher |
+| `teleop_system/utils/ros2_helpers.py` | Added `TRACKER_HEAD`, `ESTOP_ACTIVE` topic names |
+| `teleop_system/mocap/bvh_replay_publisher.py` | Added `TrackerRole.HEAD` to `_tracker_pubs` |
+| `docs/debugging_log.md` | 5 new entries for all fixes |
+| `docs/hw_configuration_memo.md` | New — HW configuration memo for Monday meeting |
+
+### Test Results
+
+- **270/270 tests pass** (no regressions)
+
+---
+
+## 2026-02-01 (Session 7) — Dual Viewer, Init Pose, Workflow Buttons, Hand Skeleton
+
+### Summary
+
+4 major GUI enhancements: replaced tracker view with dual skeleton+tracker viewer using interpolated humanoid stick figure, added configurable initial A-pose with ROS2 service and GUI button, restructured status tab with teleop workflow buttons (module enable → init pose → calibrate → start teleop → soft stop/resume → e-stop), and added hand skeleton visualization with 2D FK drawing.
+
+### Changes
+
+| Change | Description |
+|--------|-------------|
+| Dual Tracker View | Replaced 3 scatter plots with 2-panel dual view: "Skeleton (Side X-Z)" with 13 bone line series + tracker scatter, "Trackers (Front Y-Z)" with colored scatter. Interpolates 14-point humanoid from 6 tracker positions. |
+| Init Pose | Configurable A-pose in config/simulation/mujoco.yaml and config/hardware/rby1.yaml. ROS2 Trigger service `/teleop/init_pose` in MuJoCo bridge. GUI "Init Pose" button. |
+| Workflow Buttons | Module checkboxes (per-module enable/disable), Init Pose → Calibrate → Start Teleop sequence, Soft Stop / Resume / Return to Init operation controls, reorganized E-Stop. |
+| Hand Skeleton | DearPyGui drawlist canvases (400×450px) with 2D FK hand skeleton. Palm polygon + 5 color-coded finger chains (3 bones each). `compute_finger_points()` for forward kinematics. |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `teleop_system/utils/ros2_helpers.py` | Added `INIT_POSE` service name |
+| `config/simulation/mujoco.yaml` | Added `initial_pose` section (A-pose) |
+| `config/hardware/rby1.yaml` | Added `initial_pose` section |
+| `teleop_system/simulators/mujoco_ros2_bridge.py` | Init pose service server, config loading, callback |
+| `teleop_system/gui/control_panel.py` | Complete rewrite (1241 lines) — all 4 enhancements |
+| `teleop_system/gui/gui_node.py` | Init pose client, soft stop/resume, hand cmd subscriptions |
+| `tests/test_phase5_camera_gui.py` | Updated test for `enabled=True` default |
+
+### Test Results
+
+- **270/270 tests pass** (no regressions)
+
+---
+
 ## 2026-02-01 (Session 6) — GUI Enhancements: E-Stop, Module Activity, Hand Viewer, 3-View Tracker
 
 ### Summary

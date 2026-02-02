@@ -143,6 +143,8 @@ def main():
                     PoseStamped, TopicNames.TRACKER_RIGHT_FOOT, qos),
                 TrackerRole.LEFT_FOOT: self.create_publisher(
                     PoseStamped, TopicNames.TRACKER_LEFT_FOOT, qos),
+                TrackerRole.HEAD: self.create_publisher(
+                    PoseStamped, TopicNames.TRACKER_HEAD, qos),
             }
 
             self._hmd_pub = self.create_publisher(

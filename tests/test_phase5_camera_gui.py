@@ -151,7 +151,7 @@ class TestControlPanelModel:
         assert isinstance(status, ModuleStatus)
         assert status.name == "Arm Teleop"
         assert status.connected is False
-        assert status.enabled is False
+        assert status.enabled is True  # modules start enabled by default
 
     def test_multiple_modules(self):
         from teleop_system.gui.control_panel import ControlPanel
